@@ -1,0 +1,10 @@
+.env
+node_modules/
+out/
+cache/
+# broadcast/ намеренно НЕ игнорируется: история деплоев идёт в сабмит
+worker/state.json
+worker/failed.json
+# склонированные внешние примеры-справки (re-clonable, см. CLAUDE.md)
+docs/vendor/ccnext-testnet-bridge-examples/
+docs/vendor/usc-testnet-bridge-examples/

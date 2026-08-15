@@ -1,0 +1,7 @@
+packages:
+  - contracts
+  - worker
+  - agent
+  - web
+allowBuilds:
+  esbuild: true

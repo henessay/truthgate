@@ -1,0 +1,7 @@
+{
+  "name": "truthgate",
+  "private": true,
+  "version": "0.1.0",
+  "description": "TruthGate — cross-chain credit platform on Creditcoin CC3 Testnet + Ethereum Sepolia (Attestcoin/USC protocol)",
+  "packageManager": "pnpm@11.21.0"
+}

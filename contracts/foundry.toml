@@ -1,0 +1,20 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib", "node_modules"]
+solc_version = "0.8.24"
+evm_version = "cancun"
+remappings = [
+    "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
+    "@gluwa/usc-contracts/=node_modules/@gluwa/usc-contracts/",
+]
+# Деплой-скрипты пишут адреса в docs/deployments.json (репо-корень)
+fs_permissions = [{ access = "read-write", path = "../docs" }]
+
+[rpc_endpoints]
+cc3 = "https://rpc.cc3-testnet.creditcoin.network"
+sepolia = "${SEPOLIA_RPC}"
+
+# Chain IDs:
+#   cc3     = 102031 (Creditcoin CC3 Testnet)
+#   sepolia = 11155111 (Ethereum Sepolia)
