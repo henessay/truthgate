@@ -41,7 +41,33 @@ RepaymentBridge v1 (`0xEEd81A27df1D65E90B682264d23205E1ff03Aa8B`) выведен
 | 11 | Лок №2: 0.5 USDC (блок 11522657) | Sepolia | `0xb05316676028d61c015ad0bb540a92a86e4bca64954f19ba49c82f91cad7cfb4` | событие `UsdcLockedForRepayment` |
 | 11a | Путь Б, доставка лока №2 (автономно worker'ом) | CC3 | `0xb12e8797a43767ac67f8145abc5ae78c5c40c44a7a6c82e555a0d1c2164527f0` | займ №2 ЗАКРЫТ (status Repaid), usdcShare 1.5, localScore +1 |
 | 12 | Лок №3: 0.2 USDC (блок 11522668) — НЕГАТИВНЫЙ СЦЕНАРИЙ | Sepolia | `0x4b77135fb92d5fb98cec196e54156abec9495a5a06a11ca88170481eceb046ce` | доставка отвергнута: `USDC share cap exceeded` (кап 30%: 1.5+0.2 > 1.575); on-chain транзакции нет — реверт пойман на estimateGas |
-| 13 | Своп казны: swapWusdcForCtc(1.5e18), msg.value 1.425 CTC | CC3 | ⏳ | ожидается: `LPPool.settle`, высвобождение принципала 1.25, `outstandingPrincipal` → 0 |
+| 13 | Своп казны: swapWusdcForCtc(1.5e18), msg.value 1.425 CTC (дисконт 5%) | CC3 | `0xc13efd5b198d7aa3a5aa8e74966a54c3f975e963c4026e831a98f06a28d16490` | `WusdcSwapped` + `LPPool.settle`: принципал 1.25 высвобожден, `outstandingPrincipal` → 0, покупатель получил 1.5 wUSDC |
+
+## Финальное состояние (после шага 13, сверено с арифметикой)
+
+| Величина | Значение | Сверка |
+|---|---|---|
+| LPPool: баланс | 100.355 CTC | 100 (стейк) − 4 − 5 (фондирования) + 4.18 (absorb №1: 4.2 − burn 0.02) + 3.75 (absorb №2) + 1.425 (settle) ✓ |
+| LPPool: outstandingPrincipal | 0 | весь выданный принципал (9) восстановлен: 4 + 3.75 путём А, 1.25 через settle ✓ |
+| LPPool: цена LP-доли | 1.00355 (totalAssets 100.355 / totalShares 100) | доход LP 0.355 = 0.18 (процент №1 минус burn) + 0.175 (процент №2 минус дисконт свопа 0.075) ✓ |
+| Казна моста | principalFace 0, interestFace 0, wUSDC balance 0 | полностью выкуплена; 1.5 wUSDC у покупателя `0x025A…a3d0` ✓ |
+| Сожжено на 0xdEaD | 0.02 CTC | 10% (BURN_BPS) от процентной части пути А займа №1 (0.2); у пути Б burn'а нет — его процент несёт дисконт свопа. (На 0xdEaD есть ещё чужие 0.01 от 2026-08-13 — не наши.) ✓ |
+| borrowers(0x025A…): ethScore | 0.015 | из двух доказанных депозитов ✓ |
+| borrowers: localScore / loansCompleted | 2 / 2 | займы №1 и №2 погашены полностью ✓ |
+| borrowers: openDebt | 0 | ✓ |
+| creditLimit | 7.05 CTC | 5 (BASE) + (0.015 − 0.01)×10 + 2×1 (localScore) ✓ |
+
+## Замеры (Integration Summary)
+
+| Метрика | Значение |
+|---|---|
+| Аттестация свежего Sepolia-блока на CC3 | ~470 с (~8 мин; лаг — дизайн Attestcoin, защита от реоргов) |
+| Ожидание по уже аттестованному блоку | ~6 с (готовность кэша prover'а) |
+| Генерация proof'а (Prover API) | ~0.4–0.7 с (по аттестованному блоку — из кэша) |
+| Верификация + execute на CC3 (конец-в-конец) | ~10–12 с |
+| Газ: скоринговая доставка (execute → CreditCore) | ~670k (669 340 / 669 788) |
+| Газ: доставка погашения (execute → RepaymentBridge, минт + учёт) | ~1.0M (1 008 350 / 986 174) |
+| Газ: swapWusdcForCtc | 401 282 |
 
 ## Негативные сценарии (защиты, сработавшие вживую)
 
