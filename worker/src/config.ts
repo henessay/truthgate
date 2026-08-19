@@ -50,7 +50,12 @@ export function loadDeployments(): Deployments {
 export const CONFIG = {
   // Сети (CLAUDE.md): CC3 chainId 102031, Sepolia 11155111, chainKey Sepolia = 1
   chainKey: 1,
-  sepoliaRpc: requireEnv('SEPOLIA_RPC'),
+  // SEPOLIA_RPC — один URL или список через запятую (первый — основной,
+  // остальные — фолбэк при ошибках провайдера)
+  sepoliaRpcs: requireEnv('SEPOLIA_RPC')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
   cc3Rpc: process.env.CC3_RPC ?? 'https://rpc.cc3-testnet.creditcoin.network',
   proverApiUrl: process.env.PROVER_API_URL ?? 'https://prover.cc3-testnet.creditcoin.network',
   privateKey: requireEnv('DEPLOYER_PRIVATE_KEY'),
@@ -62,7 +67,14 @@ export const CONFIG = {
   attestTimeoutMs: Number(process.env.WORKER_ATTEST_TIMEOUT_MS ?? 1_200_000),
   maxAttempts: 5,
   retryBaseDelayMs: 30_000, // экспоненциальный backoff: 30s, 60s, 120s, 240s, 480s
-  getLogsChunk: 5_000, // лимит диапазона getLogs на бесплатных RPC
+  // Alchemy free tier режет eth_getLogs до 10 блоков; при ошибке про диапазон
+  // watcher дополнительно ужимает чанк сам (адаптивная деградация)
+  getLogsChunk: Number(process.env.LOGS_CHUNK_SIZE ?? 9),
+  // Первая инициализация курсора: head − lookback, чтобы не терять события,
+  // отправленные до запуска worker'а
+  startLookbackBlocks: Number(process.env.START_LOOKBACK_BLOCKS ?? 50),
+  // Чанков за один pollOnce — чтобы длинный бэкфилл не блокировал очередь
+  maxChunksPerPoll: 20,
 
   stateFile: resolve(WORKER_DIR, 'state.json'),
   failedFile: resolve(WORKER_DIR, 'failed.json'),

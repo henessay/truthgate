@@ -1,8 +1,8 @@
-import { JsonRpcProvider, EventLog } from 'ethers';
+import { EventLog } from 'ethers';
 import { CONFIG, loadDeployments } from './config.js';
 import { log } from './logger.js';
 import { loadState, saveState, loadFailed } from './state.js';
-import { buildWatchedContracts, pollOnce, toPendingEvent } from './watcher.js';
+import { SepoliaRpcPool, pollOnce, toPendingEvent } from './watcher.js';
 import { buildPipelineDeps, processEvent, handleFailure } from './pipeline.js';
 
 let shuttingDown = false;
@@ -17,8 +17,7 @@ process.on('SIGTERM', () => {
 /** Основной цикл: watcher → очередь → конвейер (verifySingle, по одному proof'у). */
 async function run(): Promise<void> {
   const deployments = loadDeployments();
-  const sepolia = new JsonRpcProvider(CONFIG.sepoliaRpc);
-  const watched = buildWatchedContracts(sepolia, deployments);
+  const pool = new SepoliaRpcPool(CONFIG.sepoliaRpcs, deployments);
   const deps = buildPipelineDeps(deployments);
   const state = loadState();
 
@@ -27,17 +26,22 @@ async function run(): Promise<void> {
     workerAddress: deps.wallet.address,
     cursor: state.lastProcessedBlock,
     queued: state.queue.length,
+    sepoliaRpcs: CONFIG.sepoliaRpcs.length,
     targets: { CreditCore: deployments.cc3.CreditCore, RepaymentBridge: deployments.cc3.RepaymentBridge },
   });
 
   while (!shuttingDown) {
-    // 1. Новые события Sepolia → очередь (курсор двигается только вместе с записью state)
+    // 1. Новые события Sepolia → очередь. Ошибка poll'а НЕ прерывает цикл:
+    // очередь ниже обрабатывается в любом случае, а провайдер ротируется.
     try {
-      const added = await pollOnce(sepolia, watched, state);
+      const added = await pollOnce(pool.provider, pool.watched, state);
       if (added > 0) log.info('watcher:enqueued', { added, queued: state.queue.length });
-      saveState(state);
     } catch (err) {
       log.warn('watcher:poll-error', { error: (err as Error).message });
+      pool.rotate((err as Error).message);
+    } finally {
+      // Частичный прогресс (чанки до ошибки) тоже сохраняем: события уже в очереди
+      saveState(state);
     }
 
     // 2. Обработка очереди: строго по одному (verifySingle-режим, батчинг позже)
@@ -63,7 +67,7 @@ async function run(): Promise<void> {
   }
 
   saveState(state);
-  sepolia.destroy();
+  pool.destroy();
   deps.cc3Provider.destroy();
   log.info('worker:stopped');
 }
@@ -95,11 +99,21 @@ async function status(): Promise<void> {
 /** Ручной перезапуск одного события по txHash: найти логи транзакции и поставить в очередь. */
 async function replay(txHash: string): Promise<void> {
   const deployments = loadDeployments();
-  const sepolia = new JsonRpcProvider(CONFIG.sepoliaRpc);
-  const watched = buildWatchedContracts(sepolia, deployments);
+  const pool = new SepoliaRpcPool(CONFIG.sepoliaRpcs, deployments);
 
-  const receipt = await sepolia.getTransactionReceipt(txHash);
+  // Receipt тянем с фолбэком по списку RPC
+  let receipt = null;
+  for (let i = 0; ; i++) {
+    try {
+      receipt = await pool.provider.getTransactionReceipt(txHash);
+      break;
+    } catch (err) {
+      if (i >= CONFIG.sepoliaRpcs.length - 1) throw err;
+      pool.rotate((err as Error).message);
+    }
+  }
   if (!receipt) throw new Error(`Transaction ${txHash} not found on Sepolia`);
+  const watched = pool.watched;
 
   const state = loadState();
   let enqueued = 0;
@@ -129,7 +143,7 @@ async function replay(txHash: string): Promise<void> {
 
   if (enqueued === 0) log.warn('replay:no-matching-events', { txHash });
   saveState(state);
-  sepolia.destroy();
+  pool.destroy();
 }
 
 const [, , command, arg] = process.argv;

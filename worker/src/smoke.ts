@@ -12,7 +12,7 @@ import { CONFIG } from './config.js';
 import { log, phase } from './logger.js';
 
 async function main(): Promise<void> {
-  const sepolia = new JsonRpcProvider(CONFIG.sepoliaRpc);
+  const sepolia = new JsonRpcProvider(CONFIG.sepoliaRpcs[0]);
   const cc3 = new JsonRpcProvider(CONFIG.cc3Rpc);
 
   const doneSepolia = phase('smoke:sepolia-head');
