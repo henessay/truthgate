@@ -280,7 +280,10 @@ contract CreditCore is TruthGateBase {
         return loanId;
     }
 
-    /// @notice Полная сумма к погашению с учётом штрафа за просрочку.
+    /// @notice ВАЛОВАЯ сумма к погашению с учётом штрафа за просрочку:
+    /// principal + interestDue (+штраф). repaidAmount НЕ вычитается — это полная
+    /// цена займа, а не остаток; уже погашенный займ вернёт то же значение.
+    /// Остаток к оплате — outstandingDueFor.
     /// После дедлайна (или в статусе Expired) процентная часть дорожает на
     /// LATE_PENALTY_BPS; займ остаётся погашаемым — это путь реабилитации.
     function totalDueFor(uint256 loanId) public view returns (uint256) {
@@ -290,6 +293,14 @@ contract CreditCore is TruthGateBase {
             return baseDue + (loan.interestDue * LATE_PENALTY_BPS) / BPS_DENOMINATOR;
         }
         return baseDue;
+    }
+
+    /// @notice НЕТТО-остаток к погашению: totalDueFor минус уже выплаченное.
+    /// «Сколько ещё платить» для дашбордов и демо; у погашенного займа — 0.
+    function outstandingDueFor(uint256 loanId) external view returns (uint256) {
+        uint256 due = totalDueFor(loanId);
+        uint256 repaid = loans[loanId].repaidAmount;
+        return due > repaid ? due - repaid : 0;
     }
 
     function _isLate(Loan storage loan) internal view returns (bool) {

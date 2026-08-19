@@ -207,6 +207,49 @@ contract RepaymentBridgeTest is Test {
         assertEq(repaid, 1 ether);
     }
 
+    // ---------- инвариант №4 (CLAUDE.md): queryId помечен ⟺ все эффекты применены ----------
+
+    /// @dev Реплика TruthGateBase._computeQueryId: keccak256(chainKey ‖ height ‖ txIndex),
+    /// txIndex мока = 0. Ломается при изменении формулы queryId — это намеренно.
+    function _queryId(uint64 height) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(uint256(1), uint64(height), uint256(0)));
+    }
+
+    function test_invariant_queryIdMarkedIffEffectsApplied() public {
+        // ⟹ успех: queryId помечен И эффекты применены в той же транзакции
+        _proveLock(SEPOLIA_LOCK_HEIGHT, 1 * USDC_1);
+        assertTrue(bridge.processedQueries(_queryId(SEPOLIA_LOCK_HEIGHT)));
+        (, , , uint256 repaid, , , , ) = core.loans(loanId);
+        assertEq(repaid, 1 ether);
+        assertEq(wusdc.totalSupply(), 1 ether);
+
+        // Попутно — семантика view'ов: totalDueFor ВАЛОВЫЙ (погашение его не меняет),
+        // outstandingDueFor — нетто-остаток
+        assertEq(core.totalDueFor(loanId), 10.5 ether);
+        assertEq(core.outstandingDueFor(loanId), 9.5 ether);
+
+        // ⟸ реверт ГЛУБОКО в обработчике, уже ПОСЛЕ минта wUSDC: гасим займ
+        // полностью путём А и доставляем ещё один лок — мост его пропустит
+        // (status Repaid ≠ Expired, кап не превышен), минт выполнится, а
+        // CreditCore.creditRepaymentFromBridge ревертнёт "invalid loan status"
+        vm.deal(bob, 9.5 ether);
+        vm.prank(bob);
+        core.repayInCTC{value: 9.5 ether}(loanId);
+        assertEq(core.outstandingDueFor(loanId), 0);
+
+        uint64 h2 = SEPOLIA_LOCK_HEIGHT + 1;
+        uint256 supplyBefore = wusdc.totalSupply();
+        bytes memory tx2 = _lockTx(REPAYMENT_VAULT_ON_SEPOLIA, bob, loanId, USDC_1 / 2);
+        vm.expectRevert("invalid loan status");
+        _executeOnBridge(h2, tx2);
+
+        // Атомарный откат: ни queryId, ни минта, ни кредитного учёта
+        assertFalse(bridge.processedQueries(_queryId(h2)));
+        assertEq(wusdc.totalSupply(), supplyBefore);
+        (, , , uint256 repaidAfter, , , , ) = core.loans(loanId);
+        assertEq(repaidAfter, 10.5 ether);
+    }
+
     function test_expiredLoan_distinctRevert() public {
         // Честная просрочка, зафиксированная протоколом, — свой текст реверта
         vm.roll(deadline + 1);
