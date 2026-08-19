@@ -10,3 +10,4 @@ worker/failed.json
 # склонированные внешние примеры-справки (re-clonable, см. CLAUDE.md)
 docs/vendor/ccnext-testnet-bridge-examples/
 docs/vendor/usc-testnet-bridge-examples/
+web/dist/
