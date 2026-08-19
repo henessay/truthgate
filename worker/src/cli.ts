@@ -4,6 +4,7 @@ import { log } from './logger.js';
 import { loadState, syncState, updateState, loadFailed, type PendingEvent } from './state.js';
 import { SepoliaRpcPool, pollOnce, toPendingEvent } from './watcher.js';
 import { buildPipelineDeps, processEvent, handleFailure } from './pipeline.js';
+import { startServer } from './server.js';
 
 let shuttingDown = false;
 process.on('SIGINT', () => {
@@ -19,6 +20,25 @@ async function run(): Promise<void> {
   const deployments = loadDeployments();
   const pool = new SepoliaRpcPool(CONFIG.sepoliaRpcs, deployments);
   const deps = buildPipelineDeps(deployments);
+
+  // --serve: HTTP-витрина для web-фронта (state, события пайплайна, лаг аттестации)
+  let server: ReturnType<typeof startServer> | null = null;
+  if (process.argv.includes('--serve')) {
+    server = startServer(Number(process.env.WORKER_SERVE_PORT ?? 8787), async () => {
+      const [head, attested] = await Promise.all([
+        pool.provider.getBlockNumber(),
+        deps.info.getLatestAttestedHeightAndHash(CONFIG.chainKey),
+      ]);
+      const latestAttestedHeight = Number(attested.height);
+      return {
+        chainKey: CONFIG.chainKey,
+        sepoliaHead: head,
+        latestAttestedHeight,
+        gapBlocks: head - latestAttestedHeight,
+        ts: new Date().toISOString(),
+      };
+    });
+  }
   // state-дисциплина: память синхронизируется с диском ТОЛЬКО через syncState
   // (мёрж под lock'ом) — снапшот памяти никогда не затирает внешние изменения
   let state = loadState();
@@ -72,6 +92,7 @@ async function run(): Promise<void> {
   }
 
   ({ state, base } = syncState(state, base));
+  server?.close();
   pool.destroy();
   deps.cc3Provider.destroy();
   log.info('worker:stopped');
@@ -188,7 +209,7 @@ const main =
   : command === 'status' ? status()
   : command === 'replay' && arg ? replay(arg)
   : command === 'set-cursor' && arg ? setCursor(arg)
-  : Promise.reject(new Error('Usage: worker <run|status|replay <txHash>|set-cursor <block>>'));
+  : Promise.reject(new Error('Usage: worker <run [--serve]|status|replay <txHash>|set-cursor <block>>'));
 
 main.catch((err) => {
   log.error('worker:fatal', { error: (err as Error).message });

@@ -1,9 +1,20 @@
 import { useState } from 'react';
-import { DEMO_BORROWER, type LoanView, type LoanStatusName } from '../../lib/contracts';
+import { DEMO_BORROWER, type LoanView, type LoanStatusName, type PathBDelivery } from '../../lib/contracts';
 import { fmtCtc, fmtDeadline, shortAddr } from '../../lib/format';
 import { useWallet } from '../../lib/wallet';
-import { useBorrow, useBorrowerOverview, useCc3Head, useLoans, useRepay } from './hooks';
+import {
+  useBorrow,
+  useBorrowerOverview,
+  useCc3Head,
+  useLoans,
+  usePathBDeliveries,
+  usePoolStats,
+  useRepay,
+  useScoreProofCount,
+} from './hooks';
 import './borrower.css';
+
+const EXPLORER = 'https://creditcoin-testnet.blockscout.com';
 
 const STATUS_BADGE: Record<LoanStatusName, { cls: string; label: string }> = {
   None: { cls: 'idle', label: '—' },
@@ -21,6 +32,9 @@ export function BorrowerScreen() {
   const overview = useBorrowerOverview(viewAddress);
   const loans = useLoans(viewAddress);
   const head = useCc3Head();
+  const pool = usePoolStats();
+  const proofCount = useScoreProofCount(viewAddress);
+  const deliveries = usePathBDeliveries();
 
   return (
     <div className="borrower">
@@ -32,83 +46,77 @@ export function BorrowerScreen() {
       )}
 
       <div className="stat-row">
-        <StatCard
-          title="Кредитный лимит"
-          value={overview.data ? `${fmtCtc(overview.data.creditLimit)} CTC` : '…'}
-          accent="var(--accent)"
-        >
+        {/* Доминирующая карточка лимита */}
+        <div className="neo-card stat-card stat-card--hero">
+          <div className="stat-title">Кредитный лимит</div>
+          <div className="stat-value stat-value--hero num" style={{ color: 'var(--accent)' }}>
+            {overview.data ? `${fmtCtc(overview.data.creditLimit)} CTC` : '…'}
+          </div>
+          {overview.data && (
+            <div className="stat-sub num" style={{ color: 'var(--green)' }}>
+              доступно {fmtCtc(overview.data.available)} CTC
+            </div>
+          )}
           {overview.data && overview.data.creditLimit > 0n && (
             <div className="limit-breakdown num">
               <span>база {fmtCtc(overview.data.baseLimit)}</span>
               <span className="sep">+</span>
-              <span title="ethScore из доказанных Sepolia-событий">
-                ETH-скор {fmtCtc(overview.data.fromEthScore)}
-              </span>
+              <span>ETH-скор {fmtCtc(overview.data.fromEthScore)}</span>
               <span className="sep">+</span>
-              <span title="localScore за погашенные займы на CC3">
-                локальный {fmtCtc(overview.data.fromLocalScore)}
-              </span>
+              <span>локальный {fmtCtc(overview.data.fromLocalScore)}</span>
             </div>
           )}
           {overview.data?.creditLimit === 0n && (
             <div className="limit-breakdown">ethScore ниже минимума — докажите депозит на Sepolia</div>
           )}
-        </StatCard>
+          <div className="attest-line">
+            ETH-скор {overview.data ? fmtCtc(overview.data.ethScore) : '…'} из{' '}
+            <b>{proofCount.data ?? '…'} доказанных транзакций Sepolia</b> (USC block proof)
+          </div>
+        </div>
 
-        <StatCard
-          title="Доступно к займу"
-          value={overview.data ? `${fmtCtc(overview.data.available)} CTC` : '…'}
-          accent="var(--green)"
-        >
-          {overview.data && (
+        <div className="neo-card stat-card">
+          <div className="stat-title">Пул ликвидности</div>
+          <div className="stat-value num" style={{ color: 'var(--accent-cyan)' }}>
+            {pool.data ? `${fmtCtc(pool.data.balance)} CTC` : '…'}
+          </div>
+          {pool.data && (
             <div className="limit-breakdown num">
-              ethScore {fmtCtc(overview.data.ethScore)} · localScore {overview.data.localScore.toString()} · погашено
-              займов {overview.data.loansCompleted.toString()}
+              <span>LP-доля {fmtCtc(pool.data.sharePrice, 5)}</span>
+              <span className="sep">·</span>
+              <span>в займах {fmtCtc(pool.data.outstandingPrincipal)} CTC</span>
             </div>
           )}
-        </StatCard>
+        </div>
 
-        <StatCard
-          title="Текущий долг"
-          value={overview.data ? `${fmtCtc(overview.data.openDebt)} CTC` : '…'}
-          accent={overview.data && overview.data.openDebt > 0n ? 'var(--amber)' : 'var(--text-dim)'}
-        >
-          <div className="limit-breakdown">тело + процент по всем открытым займам</div>
-        </StatCard>
+        <div className="neo-card stat-card">
+          <div className="stat-title">Текущий долг</div>
+          <div
+            className="stat-value num"
+            style={{ color: overview.data && overview.data.openDebt > 0n ? 'var(--amber)' : 'var(--text-dim)' }}
+          >
+            {overview.data ? `${fmtCtc(overview.data.openDebt)} CTC` : '…'}
+          </div>
+          {overview.data && (
+            <div className="limit-breakdown num">
+              localScore {overview.data.localScore.toString()} · погашено займов{' '}
+              {overview.data.loansCompleted.toString()}
+            </div>
+          )}
+        </div>
       </div>
 
-      <BorrowCard maxAmount={overview.data?.available ?? 0n} />
-
-      <section className="loans-section">
-        <h2>Займы</h2>
-        {loans.isLoading && <p className="dim">Загрузка займов с CC3…</p>}
-        {loans.data && loans.data.length === 0 && <p className="dim">У адреса ещё нет займов.</p>}
-        {loans.data && loans.data.length > 0 && (
-          <LoanTable loans={loans.data} headBlock={head.data ?? 0n} />
-        )}
-      </section>
-    </div>
-  );
-}
-
-function StatCard({
-  title,
-  value,
-  accent,
-  children,
-}: {
-  title: string;
-  value: string;
-  accent: string;
-  children?: React.ReactNode;
-}) {
-  return (
-    <div className="neo-card stat-card">
-      <div className="stat-title">{title}</div>
-      <div className="stat-value num" style={{ color: accent }}>
-        {value}
+      <div className="bottom-row">
+        <BorrowCard maxAmount={overview.data?.available ?? 0n} />
+        <section className="loans-section">
+          <h2>Займы</h2>
+          {loans.isLoading && <p className="dim">Загрузка займов с CC3…</p>}
+          {loans.data && loans.data.length === 0 && <p className="dim">У адреса ещё нет займов.</p>}
+          {loans.data && loans.data.length > 0 && (
+            <LoanTable loans={loans.data} headBlock={head.data ?? 0n} deliveries={deliveries.data ?? {}} />
+          )}
+        </section>
       </div>
-      {children}
     </div>
   );
 }
@@ -131,7 +139,7 @@ function BorrowCard({ maxAmount }: { maxAmount: bigint }) {
     <div className="neo-card borrow-card">
       <div className="borrow-head">
         <h2>Взять заём</h2>
-        <span className="dim num">доступно {fmtCtc(maxAmount)} CTC</span>
+        <span className="dim num">до {fmtCtc(maxAmount)} CTC</span>
       </div>
       <div className="borrow-controls">
         <input
@@ -151,7 +159,12 @@ function BorrowCard({ maxAmount }: { maxAmount: bigint }) {
             {borrow.isPending ? 'Транзакция…' : 'Занять'}
           </button>
         ) : (
-          <button className="neo-btn" disabled={!hasWallet || connecting} title={disabledReason ?? undefined} onClick={() => void connect()}>
+          <button
+            className="neo-btn"
+            disabled={!hasWallet || connecting}
+            title={disabledReason ?? undefined}
+            onClick={() => void connect()}
+          >
             {connecting ? 'Подключение…' : 'Подключить кошелёк'}
           </button>
         )}
@@ -160,7 +173,7 @@ function BorrowCard({ maxAmount }: { maxAmount: bigint }) {
       {borrow.data && (
         <p className="tx-ok num">
           Заём выдан:{' '}
-          <a href={`https://creditcoin-testnet.blockscout.com/tx/${borrow.data}`} target="_blank" rel="noreferrer">
+          <a href={`${EXPLORER}/tx/${borrow.data}`} target="_blank" rel="noreferrer">
             {borrow.data.slice(0, 14)}…
           </a>
         </p>
@@ -169,7 +182,15 @@ function BorrowCard({ maxAmount }: { maxAmount: bigint }) {
   );
 }
 
-function LoanTable({ loans, headBlock }: { loans: LoanView[]; headBlock: bigint }) {
+function LoanTable({
+  loans,
+  headBlock,
+  deliveries,
+}: {
+  loans: LoanView[];
+  headBlock: bigint;
+  deliveries: Record<string, PathBDelivery>;
+}) {
   const { address } = useWallet();
   const repay = useRepay();
 
@@ -192,6 +213,7 @@ function LoanTable({ loans, headBlock }: { loans: LoanView[]; headBlock: bigint 
           const open = l.status === 'Funded' || l.status === 'PartlyRepaid';
           const deadline = fmtDeadline(l.deadlineBlock, headBlock);
           const capPct = l.usdcCap > 0n ? Number((l.usdcRepaidShare * 100n) / l.usdcCap) : 0;
+          const delivery = deliveries[l.id.toString()];
           const repayingThis = repay.isPending && repay.variables?.loanId === l.id;
           return (
             <tr key={l.id.toString()}>
@@ -223,6 +245,17 @@ function LoanTable({ loans, headBlock }: { loans: LoanView[]; headBlock: bigint 
                   <span className="num dim">
                     {fmtCtc(l.usdcRepaidShare)} / {fmtCtc(l.usdcCap)}
                   </span>
+                  {delivery && (
+                    <a
+                      className="proof-link num"
+                      href={`${EXPLORER}/tx/${delivery.lastCc3TxHash}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={`Доставка proof'а на CC3: ${delivery.lastCc3TxHash}`}
+                    >
+                      {delivery.count > 1 ? `${delivery.count} proof’а ↗` : 'proof ↗'}
+                    </a>
+                  )}
                 </div>
               </td>
               <td>

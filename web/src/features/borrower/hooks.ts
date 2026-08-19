@@ -1,6 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { parseEther } from 'ethers';
-import { creditCore, fetchBorrowerOverview, fetchLoans, withSigner } from '../../lib/contracts';
+import {
+  creditCore,
+  fetchBorrowerOverview,
+  fetchLoans,
+  fetchPathBDeliveries,
+  fetchPoolStats,
+  fetchScoreProofCount,
+  withSigner,
+} from '../../lib/contracts';
 import { cc3Provider } from '../../lib/providers';
 import { useWallet } from '../../lib/wallet';
 
@@ -27,6 +35,30 @@ export function useLoans(address: string) {
     queryKey: ['loans', address],
     queryFn: () => fetchLoans(address),
     refetchInterval: POLL_MS,
+  });
+}
+
+export function usePoolStats() {
+  return useQuery({
+    queryKey: ['poolStats'],
+    queryFn: fetchPoolStats,
+    refetchInterval: POLL_MS,
+  });
+}
+
+export function useScoreProofCount(address: string) {
+  return useQuery({
+    queryKey: ['scoreProofs', address],
+    queryFn: () => fetchScoreProofCount(address),
+    refetchInterval: 60_000, // события истории — меняются редко
+  });
+}
+
+export function usePathBDeliveries() {
+  return useQuery({
+    queryKey: ['pathBDeliveries'],
+    queryFn: fetchPathBDeliveries,
+    refetchInterval: 30_000,
   });
 }
 

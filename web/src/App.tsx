@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { BorrowerScreen } from './features/borrower/BorrowerScreen';
+import { PipelineScreen } from './features/pipeline/PipelineScreen';
 import { shortAddr } from './lib/format';
 import { useWallet } from './lib/wallet';
 import './app.css';
 
 const TABS = [
   { id: 'borrower', label: 'Заёмщик', ready: true },
-  { id: 'pipeline', label: 'Пайплайн proof’ов', ready: false },
+  { id: 'pipeline', label: 'Пайплайн proof’ов', ready: true },
   { id: 'overview', label: 'Обзор', ready: false },
   { id: 'swap', label: 'SwapDesk', ready: false },
 ] as const;
@@ -55,7 +56,10 @@ export function App() {
 
       {error && <p className="wallet-error">{error}</p>}
 
-      <main className="content">{tab === 'borrower' && <BorrowerScreen />}</main>
+      <main className="content">
+        {tab === 'borrower' && <BorrowerScreen />}
+        {tab === 'pipeline' && <PipelineScreen />}
+      </main>
     </div>
   );
 }

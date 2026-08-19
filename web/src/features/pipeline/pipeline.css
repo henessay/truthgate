@@ -1,0 +1,110 @@
+.pipeline { display: flex; flex-direction: column; gap: 24px; }
+
+/* --- верх: две неоморфные карточки --- */
+.pipe-top { display: grid; grid-template-columns: 1fr 1.8fr; gap: 22px; }
+@media (max-width: 900px) { .pipe-top { grid-template-columns: 1fr; } }
+
+.pipe-worker-card { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.pipe-worker-meta { font-size: 12.5px; color: var(--text-dim); }
+
+.pipe-attest-card { display: flex; flex-direction: column; gap: 8px; }
+.attest-gap { font-size: 15px; color: var(--text); }
+.attest-gap-num { font-size: 30px; font-weight: 600; color: var(--amber); margin-right: 6px; }
+.attest-heights { display: flex; gap: 10px; font-size: 13px; color: var(--text-dim); }
+.attest-heights b { color: var(--text); font-weight: 600; }
+.proven-text { color: var(--green) !important; }
+
+.pipe-h2 { font-size: 17px; margin-bottom: 10px; }
+
+/* --- лента событий: ПЛОСКИЕ карточки-строки, никакого рельефа --- */
+.pipe-feed { display: flex; flex-direction: column; }
+.pipe-card {
+  padding: 16px 14px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pipe-card:last-child { border-bottom: none; }
+/* активные события чуть подсвечены слева статусным цветом */
+.pipe-card.attestation { box-shadow: inset 2px 0 0 var(--amber); }
+.pipe-card.proof, .pipe-card.execute { box-shadow: inset 2px 0 0 var(--accent); }
+.pipe-card.failed { box-shadow: inset 2px 0 0 var(--red); }
+
+.pipe-card-head { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.pipe-card-title { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.pipe-event-name { font-weight: 600; font-size: 15px; }
+.pipe-card-links { display: flex; align-items: center; gap: 14px; font-size: 12.5px; }
+
+/* --- шаги фаз --- */
+.pipe-steps { display: flex; align-items: center; gap: 0; flex-wrap: wrap; }
+.pipe-step { display: flex; align-items: center; }
+.pipe-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--surface-2);
+  border: 1.5px solid var(--text-faint);
+  flex-shrink: 0;
+}
+.pipe-step-label { font-size: 12.5px; color: var(--text-faint); margin: 0 8px 0 6px; }
+.pipe-link { width: 34px; height: 1.5px; background: var(--line); margin-right: 8px; }
+
+.pipe-step.done .pipe-dot { background: var(--green); border-color: var(--green); }
+.pipe-step.done .pipe-step-label { color: var(--text-dim); }
+.pipe-step.done + * .pipe-link, .pipe-step.done .pipe-link { background: rgba(67, 207, 148, 0.4); }
+
+.pipe-step.active .pipe-dot {
+  background: var(--amber);
+  border-color: var(--amber);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.pipe-card.proof .pipe-step.active .pipe-dot,
+.pipe-card.execute .pipe-step.active .pipe-dot {
+  background: var(--accent);
+  border-color: var(--accent);
+  animation-name: pulse-blue;
+}
+.pipe-step.active .pipe-step-label { color: var(--text); font-weight: 600; }
+.pipe-step.failed .pipe-dot { background: var(--red); border-color: var(--red); }
+.pipe-step.failed .pipe-step-label { color: var(--red); }
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--amber-glow); }
+  50% { box-shadow: 0 0 0 7px rgba(227, 180, 88, 0); }
+}
+@keyframes pulse-blue {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-glow); }
+  50% { box-shadow: 0 0 0 7px rgba(78, 161, 255, 0); }
+}
+
+/* --- прогресс аттестации: главная сцена демо --- */
+.attest-progress { display: flex; flex-direction: column; gap: 8px; }
+.attest-progress-bar {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--bg);
+  box-shadow: inset 2px 2px 6px var(--shadow-dark), inset -1px -1px 4px var(--shadow-light);
+  overflow: hidden;
+}
+.attest-progress-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 5px;
+  background: linear-gradient(90deg, var(--amber), var(--accent-cyan));
+  box-shadow: 0 0 10px var(--amber-glow);
+  transition: width 2.5s linear; /* плавное накопление между поллами */
+}
+.attest-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.attest-progress-meta b { color: var(--text); }
+.amber-text { color: var(--amber); }
+
+/* --- примечания к карточке --- */
+.pipe-note { font-size: 13px; color: var(--text-dim); }
+.pipe-note.failed { color: var(--red); }
+.pipe-note.done { color: var(--green); }

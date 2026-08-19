@@ -10,13 +10,15 @@
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
-/* --- рельефные карточки показателей --- */
+/* --- рельефные карточки показателей: лимит доминирует --- */
 .stat-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: 1.7fr 1fr 1fr;
   gap: 22px;
 }
+@media (max-width: 900px) { .stat-row { grid-template-columns: 1fr; } }
 .stat-card { display: flex; flex-direction: column; gap: 6px; }
+.stat-card--hero { gap: 8px; }
 .stat-title {
   font-size: 12px;
   text-transform: uppercase;
@@ -25,16 +27,37 @@
   font-weight: 500;
 }
 /* крупная сумма — главный визуальный элемент карточки */
-.stat-value { font-size: 34px; font-weight: 600; line-height: 1.1; }
+.stat-value { font-size: 28px; font-weight: 600; line-height: 1.1; }
+.stat-value--hero { font-size: 46px; }
+.stat-sub { font-size: 16px; font-weight: 500; }
 .limit-breakdown { font-size: 12.5px; color: var(--text-dim); display: flex; gap: 6px; flex-wrap: wrap; }
 .limit-breakdown .sep { color: var(--text-faint); }
 
-/* --- карточка действия --- */
+/* след Attestcoin: скор существует только из доказанных Sepolia-транзакций */
+.attest-line {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.attest-line b { color: var(--accent-cyan); font-weight: 600; }
+
+/* --- нижний ряд: компактная карточка действия + таблица --- */
+.bottom-row {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: 26px;
+  align-items: start;
+}
+@media (max-width: 1000px) { .bottom-row { grid-template-columns: 1fr; } }
+
 .borrow-card { display: flex; flex-direction: column; gap: 14px; }
-.borrow-head { display: flex; align-items: baseline; justify-content: space-between; }
-.borrow-head h2 { font-size: 17px; }
-.borrow-controls { display: flex; gap: 14px; }
-.borrow-controls .neo-input { flex: 0 1 220px; }
+.borrow-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.borrow-head h2 { font-size: 16px; }
+.borrow-head .dim { font-size: 12.5px; }
+.borrow-controls { display: flex; flex-direction: column; gap: 12px; }
+.borrow-controls .neo-input { width: 100%; }
 
 .tx-error { margin: 0; color: var(--red); font-size: 13px; word-break: break-word; }
 .tx-ok { margin: 0; color: var(--green); font-size: 13px; }
@@ -44,5 +67,6 @@
 .loans-section h2 { font-size: 17px; }
 .deadline-cell { font-size: 13px; }
 .cap-cell { display: flex; align-items: center; gap: 10px; font-size: 12.5px; }
+.proof-link { font-size: 12px; white-space: nowrap; color: var(--accent-cyan); }
 
 .dim { color: var(--text-dim); }

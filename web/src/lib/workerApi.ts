@@ -43,12 +43,41 @@ async function get<T>(path: string): Promise<T | null> {
   }
 }
 
+export interface WorkerLogEvent {
+  seq: number;
+  ts: string;
+  level: 'info' | 'warn' | 'error';
+  msg: string;
+  [k: string]: unknown;
+}
+
+export interface WorkerEventsDto {
+  latestSeq: number;
+  events: WorkerLogEvent[];
+}
+
+export interface AttestationDto {
+  chainKey: number;
+  sepoliaHead: number;
+  latestAttestedHeight: number;
+  gapBlocks: number;
+  ts: string;
+}
+
 export function fetchWorkerState(): Promise<WorkerStateDto | null> {
   return get<WorkerStateDto>('/api/state');
 }
 
 export function fetchWorkerFailed(): Promise<WorkerFailedDto[] | null> {
   return get<WorkerFailedDto[]>('/api/failed');
+}
+
+export function fetchWorkerEvents(since: number): Promise<WorkerEventsDto | null> {
+  return get<WorkerEventsDto>(`/api/events?since=${since}`);
+}
+
+export function fetchAttestation(): Promise<AttestationDto | null> {
+  return get<AttestationDto>('/api/attestation');
 }
 
 export async function workerOnline(): Promise<boolean> {

@@ -60,6 +60,55 @@ export interface BorrowerOverview {
   fromLocalScore: bigint;
 }
 
+/** Блок незадолго до деплоя CC3-контрактов — нижняя граница queryFilter'ов. */
+export const CC3_DEPLOY_BLOCK = 5_315_000;
+
+export interface PoolStats {
+  balance: bigint;
+  totalAssets: bigint;
+  totalShares: bigint;
+  /** Цена LP-доли ×1e18 (1e18 = 1.0) */
+  sharePrice: bigint;
+  outstandingPrincipal: bigint;
+}
+
+export async function fetchPoolStats(): Promise<PoolStats> {
+  const [balance, totalAssets, totalShares, outstandingPrincipal] = await Promise.all([
+    cc3Provider.getBalance(ADDR.cc3.LPPool),
+    lpPool.totalAssets() as Promise<bigint>,
+    lpPool.totalShares() as Promise<bigint>,
+    lpPool.outstandingPrincipal() as Promise<bigint>,
+  ]);
+  const sharePrice = totalShares > 0n ? (totalAssets * 10n ** 18n) / totalShares : 10n ** 18n;
+  return { balance, totalAssets, totalShares, sharePrice, outstandingPrincipal };
+}
+
+/** Сколько Sepolia-транзакций доказано в скоринг заёмщика (события EthScoreIncreased). */
+export async function fetchScoreProofCount(address: string): Promise<number> {
+  const logs = await creditCore.queryFilter(creditCore.filters.EthScoreIncreased(address), CC3_DEPLOY_BLOCK);
+  return logs.length;
+}
+
+export interface PathBDelivery {
+  count: number;
+  lastCc3TxHash: string;
+}
+
+/** Доставленные через мост погашения по займам: ccLoanId → {count, hash CC3-транзакции}. */
+export async function fetchPathBDeliveries(): Promise<Record<string, PathBDelivery>> {
+  const logs = await repaymentBridge.queryFilter(
+    repaymentBridge.filters.UsdcRepaymentProcessed(),
+    CC3_DEPLOY_BLOCK,
+  );
+  const out: Record<string, PathBDelivery> = {};
+  for (const l of logs) {
+    const loanId = (l as { args?: { ccLoanId?: bigint } }).args?.ccLoanId?.toString();
+    if (!loanId) continue;
+    out[loanId] = { count: (out[loanId]?.count ?? 0) + 1, lastCc3TxHash: l.transactionHash };
+  }
+  return out;
+}
+
 export async function fetchBorrowerOverview(address: string): Promise<BorrowerOverview> {
   const [[ethScore, localScore, openDebt, loansCompleted], creditLimit, baseLimit, minEth, slopeNum, slopeDen, localK] =
     await Promise.all([
