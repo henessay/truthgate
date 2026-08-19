@@ -1,7 +1,7 @@
 import { EventLog } from 'ethers';
 import { CONFIG, loadDeployments } from './config.js';
 import { log } from './logger.js';
-import { loadState, saveState, loadFailed } from './state.js';
+import { loadState, syncState, updateState, loadFailed, type PendingEvent } from './state.js';
 import { SepoliaRpcPool, pollOnce, toPendingEvent } from './watcher.js';
 import { buildPipelineDeps, processEvent, handleFailure } from './pipeline.js';
 
@@ -19,7 +19,10 @@ async function run(): Promise<void> {
   const deployments = loadDeployments();
   const pool = new SepoliaRpcPool(CONFIG.sepoliaRpcs, deployments);
   const deps = buildPipelineDeps(deployments);
-  const state = loadState();
+  // state-дисциплина: память синхронизируется с диском ТОЛЬКО через syncState
+  // (мёрж под lock'ом) — снапшот памяти никогда не затирает внешние изменения
+  let state = loadState();
+  let base = structuredClone(state);
 
   log.info('worker:started', {
     chainKey: CONFIG.chainKey,
@@ -40,8 +43,9 @@ async function run(): Promise<void> {
       log.warn('watcher:poll-error', { error: (err as Error).message });
       pool.rotate((err as Error).message);
     } finally {
-      // Частичный прогресс (чанки до ошибки) тоже сохраняем: события уже в очереди
-      saveState(state);
+      // Частичный прогресс (чанки до ошибки) тоже сохраняем: события уже в очереди.
+      // Мёрж подхватывает внешние set-cursor/replay, случившиеся между тиками.
+      ({ state, base } = syncState(state, base));
     }
 
     // 2. Обработка очереди: строго по одному (verifySingle-режим, батчинг позже)
@@ -60,13 +64,14 @@ async function run(): Promise<void> {
           state.processedKeys.push(due.key);
         }
       }
-      saveState(state); // незавершённое переживает рестарт, завершённое не дублируется
+      // незавершённое переживает рестарт, завершённое не дублируется
+      ({ state, base } = syncState(state, base));
     }
 
     await new Promise((r) => setTimeout(r, due ? 1_000 : CONFIG.pollIntervalMs));
   }
 
-  saveState(state);
+  ({ state, base } = syncState(state, base));
   pool.destroy();
   deps.cc3Provider.destroy();
   log.info('worker:stopped');
@@ -115,9 +120,10 @@ async function replay(txHash: string): Promise<void> {
   if (!receipt) throw new Error(`Transaction ${txHash} not found on Sepolia`);
   const watched = pool.watched;
 
-  const state = loadState();
-  let enqueued = 0;
-
+  // Сначала собираем события (сеть), затем ОДНО эксклюзивное read-modify-write:
+  // updateState читает свежий state.json под lock'ом и синхронно пишет до выхода —
+  // результат replay виден в файле сразу и не может быть затёрт снапшотом памяти.
+  const pending: PendingEvent[] = [];
   for (const w of watched) {
     const address = (await w.contract.getAddress()).toLowerCase();
     for (const l of receipt.logs) {
@@ -125,25 +131,55 @@ async function replay(txHash: string): Promise<void> {
       const parsed = w.contract.interface.parseLog({ topics: [...l.topics], data: l.data });
       if (!parsed || parsed.name !== w.eventName) continue;
 
-      const ev = toPendingEvent(
-        new EventLog(l, w.contract.interface, w.contract.interface.getEvent(w.eventName)!),
-        w.eventName,
-        w.argNames,
+      pending.push(
+        toPendingEvent(
+          new EventLog(l, w.contract.interface, w.contract.interface.getEvent(w.eventName)!),
+          w.eventName,
+          w.argNames,
+        ),
       );
+    }
+  }
+
+  if (pending.length === 0) {
+    log.warn('replay:no-matching-events', { txHash });
+    pool.destroy();
+    return;
+  }
+
+  let enqueued = 0;
+  const result = updateState((s) => {
+    for (const ev of pending) {
       // replay — принудительный: убираем из processedKeys, если был.
       // Anti-replay контракта (queryId) — вторая линия: уже обработанный proof ревертнёт.
-      state.processedKeys = state.processedKeys.filter((k) => k !== ev.key);
-      if (!state.queue.some((e) => e.key === ev.key)) {
-        state.queue.push(ev);
+      s.processedKeys = s.processedKeys.filter((k) => k !== ev.key);
+      if (!s.queue.some((e) => e.key === ev.key)) {
+        s.queue.push(ev);
         enqueued += 1;
         log.info('replay:enqueued', { key: ev.key, eventName: ev.eventName });
       }
     }
-  }
-
-  if (enqueued === 0) log.warn('replay:no-matching-events', { txHash });
-  saveState(state);
+  });
+  log.info('replay:persisted', {
+    enqueued,
+    cursor: result.lastProcessedBlock,
+    queuedKeys: result.queue.map((e) => e.key),
+  });
   pool.destroy();
+}
+
+/** Штатный сдвиг курсора watcher'а (вместо ручной правки state.json). */
+async function setCursor(arg: string): Promise<void> {
+  const block = Number(arg);
+  if (!Number.isInteger(block) || block < 0) {
+    throw new Error(`Invalid block number: ${arg}`);
+  }
+  let from = 0;
+  const result = updateState((s) => {
+    from = s.lastProcessedBlock;
+    s.lastProcessedBlock = block;
+  });
+  log.info('cursor:set', { from, to: block, queued: result.queue.length });
 }
 
 const [, , command, arg] = process.argv;
@@ -151,7 +187,8 @@ const main =
   command === 'run' ? run()
   : command === 'status' ? status()
   : command === 'replay' && arg ? replay(arg)
-  : Promise.reject(new Error('Usage: worker <run|status|replay <txHash>>'));
+  : command === 'set-cursor' && arg ? setCursor(arg)
+  : Promise.reject(new Error('Usage: worker <run|status|replay <txHash>|set-cursor <block>>'));
 
 main.catch((err) => {
   log.error('worker:fatal', { error: (err as Error).message });

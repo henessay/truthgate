@@ -76,6 +76,7 @@ export const CONFIG = {
   // Чанков за один pollOnce — чтобы длинный бэкфилл не блокировал очередь
   maxChunksPerPoll: 20,
 
-  stateFile: resolve(WORKER_DIR, 'state.json'),
+  // WORKER_STATE_FILE — для тестов state-менеджмента на изолированном файле
+  stateFile: resolve(WORKER_DIR, process.env.WORKER_STATE_FILE ?? 'state.json'),
   failedFile: resolve(WORKER_DIR, 'failed.json'),
 } as const;

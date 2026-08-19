@@ -4,6 +4,8 @@ out/
 cache/
 # broadcast/ намеренно НЕ игнорируется: история деплоев идёт в сабмит
 worker/state.json
+worker/state.json.tmp
+worker/state.json.lock
 worker/failed.json
 # склонированные внешние примеры-справки (re-clonable, см. CLAUDE.md)
 docs/vendor/ccnext-testnet-bridge-examples/
