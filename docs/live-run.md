@@ -38,15 +38,19 @@ RepaymentBridge v1 (`0xEEd81A27df1D65E90B682264d23205E1ff03Aa8B`) выведен
 | 8 | Лок №1: 1.0 USDC в RepaymentVault (блок 11497229) | Sepolia | `0x7557839d95de44445e289ac8479b70fe45f50492af3ba68e7d24dedd955be7df` | событие `UsdcLockedForRepayment` |
 | 9 | Путь Б, доставка лока №1 (execute → мост v2) | CC3 | `0x202d0e9bbe98a9779ac2e5c1f426649f234da972ab9953b10f352b59c687528a` | минт 1.0 wUSDC, `LoanPartiallyRepaid`, `UsdcRepaymentProcessed` |
 | 10 | Путь А: добивка 3.75 CTC (repayInCTC) | CC3 | `0xf7c42a6d2606b639090794965a0e21b0fab94fe09574be4bfc83c1cc4693182c` | `LoanPartiallyRepaid`, остаток долга 0.5 |
-| 11 | Лок №2: 0.5 USDC (блок 11522657) | Sepolia | `0xb05316676028d61c015ad0bb540a92a86e4bca64954f19ba49c82f91cad7cfb4` | ⏳ доставка в очереди worker'а (ожидание аттестации) |
-| 12 | Лок №3: 0.2 USDC (блок 11522668) — НЕГАТИВНЫЙ СЦЕНАРИЙ | Sepolia | `0x4b77135fb92d5fb98cec196e54156abec9495a5a06a11ca88170481eceb046ce` | ⏳ ожидаемый реверт `USDC share cap exceeded` (кап 30%: 1.5+0.2 > 1.575) |
+| 11 | Лок №2: 0.5 USDC (блок 11522657) | Sepolia | `0xb05316676028d61c015ad0bb540a92a86e4bca64954f19ba49c82f91cad7cfb4` | событие `UsdcLockedForRepayment` |
+| 11a | Путь Б, доставка лока №2 (автономно worker'ом) | CC3 | `0xb12e8797a43767ac67f8145abc5ae78c5c40c44a7a6c82e555a0d1c2164527f0` | займ №2 ЗАКРЫТ (status Repaid), usdcShare 1.5, localScore +1 |
+| 12 | Лок №3: 0.2 USDC (блок 11522668) — НЕГАТИВНЫЙ СЦЕНАРИЙ | Sepolia | `0x4b77135fb92d5fb98cec196e54156abec9495a5a06a11ca88170481eceb046ce` | доставка отвергнута: `USDC share cap exceeded` (кап 30%: 1.5+0.2 > 1.575); on-chain транзакции нет — реверт пойман на estimateGas |
 | 13 | Своп казны: swapWusdcForCtc(1.5e18), msg.value 1.425 CTC | CC3 | ⏳ | ожидается: `LPPool.settle`, высвобождение принципала 1.25, `outstandingPrincipal` → 0 |
 
 ## Негативные сценарии (защиты, сработавшие вживую)
 
 - **Anti-replay по queryId**: повторная доставка лока №1 после успеха — реверт `Query already processed`
   (worker/failed.json, 2026-08-19T14:19:53Z). Инвариант №3.
-- **Кап пути Б 30%**: лок №3 (шаг 12) — доставка обязана ревертить `USDC share cap exceeded`. ⏳ запись из failed.json будет приложена.
+- **Кап пути Б 30%**: лок №3 (шаг 12) — доставка отвергнута с `USDC share cap exceeded`. Запись worker/failed.json
+  (2026-08-19T14:41:24Z): `errorClass: execute-reverted`, `reason: "USDC share cap exceeded"`, amount 200000 (0.2 USDC),
+  target RepaymentBridge. Худший исход предотвращён дважды: контрактный require + worker не тратит газ (реверт на
+  estimateGas, on-chain транзакция не отправлялась).
 - **Исторический баг шкал высот** (исправлен): доставка лока №1 на мост v1 — реверт `repayment past deadline`
   (worker/failed.json, 2026-08-15T23:05:21Z); после фикса и передеплоя моста тот же proof прошёл (шаг 9).
 
