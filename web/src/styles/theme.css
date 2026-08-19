@@ -1,0 +1,69 @@
+/* TruthGate — дизайн-система: селективный неоморфизм в тёмно-синих тонах.
+   Приборная панель, не лендинг. Все цвета/тени — только через переменные. */
+
+:root {
+  /* База: глубокий тёмно-синий (не чёрный — теням есть куда светлеть) */
+  --bg: #0c1322;
+  --surface: #121b2e;      /* карточки чуть светлее базы */
+  --surface-2: #16213a;    /* приподнятые элементы поверх карточек */
+  --line: rgba(122, 152, 205, 0.14); /* тонкие разделители плоских списков */
+
+  /* Неоморфные тени: светлая — холодный синеватый блик сверху-слева,
+     тёмная — почти чёрная синева снизу-справа */
+  --shadow-light: rgba(126, 166, 235, 0.07);
+  --shadow-dark: rgba(2, 5, 12, 0.72);
+
+  /* Текст: контраст с запасом под видеосжатие */
+  --text: #e2e9f6;
+  --text-dim: #91a3c0;
+  --text-faint: #5c6f8d;
+
+  /* Акценты — язык статусов */
+  --accent: #4ea1ff;        /* действие */
+  --accent-cyan: #3fd4e5;
+  --amber: #e3b458;         /* ожидание аттестации */
+  --green: #43cf94;         /* доказано / подтверждено */
+  --red: #d06a72;           /* отклонено (приглушённый) */
+
+  --accent-glow: rgba(78, 161, 255, 0.28);
+  --green-glow: rgba(67, 207, 148, 0.22);
+  --amber-glow: rgba(227, 180, 88, 0.22);
+  --red-glow: rgba(208, 106, 114, 0.2);
+
+  --font-ui: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', monospace;
+
+  --radius: 18px;
+  --radius-sm: 10px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 { font-family: var(--font-ui); font-weight: 600; margin: 0; }
+
+/* Числа, суммы, адреса, блоки: моно с табличными цифрами — не прыгают при обновлении */
+.num, .mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+button { font-family: inherit; }
+input {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
