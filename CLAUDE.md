@@ -77,7 +77,7 @@ EvmV1Decoder.getLogsByEventSignature(receipt, bytes32 sig) → LogEntry[]  // Lo
 ## Ограничения v1
 
 - **Identity-модель: один EOA на обоих чейнах.** Sepolia-адрес заёмщика == его CC3-адрес: скоринговые события и погашения пути Б матчатся на заёмщика по адресу из топика события. Смарт-контракт-волеты (Safe и т.п.) и разные адреса на чейнах НЕ поддерживаются; RepaymentBridge дополнительно ревертит `borrower mismatch`, если borrower из события не совпадает с заёмщиком займа.
-- Дедлайн займа выражен в блоках CC3; RepaymentBridge сравнивает с ним source-height Sepolia напрямую (+ DELIVERY_BUFFER_BLOCKS) — осознанная демо-условность.
+- Дедлайн займа выражен в блоках CC3; RepaymentBridge проверяет его против `block.number` CC3 на момент доставки proof'а (+ DELIVERY_BUFFER_BLOCKS, тоже CC3-блоки). Sepolia-`sourceHeight` в проверке дедлайна НЕ участвует — шкалы несравнимы (исторический баг «repayment past deadline»), а аттестованной «текущей высоты» Sepolia на CC3 нет как примитива (Attestcoin намеренно держит аттестацию позади головы источника). Поздний лок отсекается транзитивно: доставка не бывает раньше лока. Различимые реверты: `loan expired` (просрочка, зафиксированная markLoanAsExpired) и `repayment delivery window exceeded` (доставка за дедлайн+буфер).
 - Курс wUSDC/CTC — константа 1:1 (тестнет, реальной цены нет); в проде — оракул.
 - Погашения пути Б высвобождают принципал LPPool не сразу, а через SwapDesk: продажа wUSDC из казны моста за CTC с дисконтом → `LPPool.settle`. Дисконт покрывается процентной частью пути Б (путь Б гасит долг процентом-первым, путь А — телом-первым; трек `Loan.principalRepaid`); гарантия покрытия — constant-check в конструкторе RepaymentBridge: `RATE·1e8 >= DISCOUNT·CAP·(1e4+RATE)`.
 

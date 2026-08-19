@@ -19,7 +19,8 @@ abstract contract TruthGateBase is Ownable {
     // только Ethereum Sepolia, чей chainKey в сети Creditcoin равен 1.
     uint64 public constant EXPECTED_CHAIN_KEY = 1;
 
-    // TRUTHGATE: окно свежести. Proof'ы с blockHeight ниже этой отметки отклоняются
+    // TRUTHGATE: окно свежести (шкала SOURCE-чейна, т.е. Sepolia-высота — сверяется
+    // с blockHeight из proof'а). Proof'ы с blockHeight ниже этой отметки отклоняются
     // для action'ов, у которых наследник оставил проверку включённой (см.
     // _isFreshnessEnforced). По умолчанию 0 — проверка ничего не отсекает.
     uint64 public minAcceptedHeight;
@@ -34,8 +35,9 @@ abstract contract TruthGateBase is Ownable {
     }
 
     // TRUTHGATE: в отличие от USCBase, наследнику передаётся и sourceHeight — высота
-    // блока source-чейна из proof'а. Нужна модулям, сверяющим дедлайны с моментом
-    // события на source-чейне (RepaymentBridge), а не с block.number CC3.
+    // блока source-чейна (Sepolia-шкала) из proof'а. ВНИМАНИЕ: она несравнима с
+    // block.number CC3 — сверять с ней можно только другие source-высоты
+    // (как minAcceptedHeight); дедлайны в CC3-блоках сверяются с block.number.
     function _processAndEmitEvent(uint8 action, bytes32 queryId, uint64 sourceHeight, bytes memory encodedTransaction)
         internal
         virtual;

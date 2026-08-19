@@ -346,7 +346,8 @@ contract CreditCore is TruthGateBase {
         Loan storage loan = loans[loanId];
         require(loan.status == LoanStatus.Funded || loan.status == LoanStatus.PartlyRepaid, "invalid loan status");
 
-        // Путь Б всегда без штрафа: своевременность по source-height доказал мост
+        // Путь Б всегда без штрафа: своевременность проверил мост — дедлайн займа
+        // на момент доставки proof'а + буфер, обе стороны в CC3-шкале
         uint256 totalDue = loan.principal + loan.interestDue;
         require(amount <= totalDue - loan.repaidAmount, "overpayment");
 

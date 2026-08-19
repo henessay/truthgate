@@ -30,10 +30,15 @@ contract RepaymentBridge is TruthGateBase {
     /// суммы к возврату (principal + interestDue). Остаток обязан прийти путём А.
     uint256 public constant USDC_SHARE_CAP_BPS = 3000;
 
-    /// @notice Буфер на доставку proof'а: лок USDC на Sepolia, случившийся не позже
-    /// deadlineBlock + буфер (по source-height), ещё принимается.
-    /// v1-условность: deadlineBlock займа выражен в блоках CC3, а source-height — в
-    /// блоках Sepolia; прямое сравнение — осознанное демо-упрощение.
+    /// @notice Буфер на доставку proof'а поверх дедлайна займа, в блоках CC3:
+    /// погашение засчитывается, пока block.number CC3 на момент доставки не ушёл за
+    /// deadlineBlock + буфер. Момент лока на Sepolia (sourceHeight) в проверке НЕ
+    /// участвует: шкалы высот Sepolia и CC3 несравнимы, а аттестованной «текущей
+    /// высоты» источника на CC3 нет как примитива (Attestcoin намеренно держит
+    /// аттестацию позади головы источника). Поздний лок отсекается сам: доставка
+    /// в реальном времени не бывает раньше лока, поэтому лок после дедлайна не
+    /// может пройти проверку по моменту доставки. Цена этой семантики: своевременный
+    /// лок, чей proof доставили позже буфера, тоже ревертит («протух по доставке»).
     uint64 public constant DELIVERY_BUFFER_BLOCKS = 1000;
 
     /// @notice Курс v1: 1 wUSDC = 1 CTC (18 decimals с обеих сторон). Константа,
@@ -101,12 +106,15 @@ contract RepaymentBridge is TruthGateBase {
     }
 
     // Окно свежести к погашениям не применяется (политика CreditCore/CLAUDE.md):
-    // своевременность здесь проверяется точнее — дедлайном по source-height.
+    // своевременность здесь проверяется дедлайном займа на момент доставки
+    // (CC3-шкала, см. DELIVERY_BUFFER_BLOCKS).
     function _isFreshnessEnforced(uint8) internal pure override returns (bool) {
         return false;
     }
 
-    function _processAndEmitEvent(uint8 action, bytes32 queryId, uint64 sourceHeight, bytes memory encodedTransaction)
+    // sourceHeight (Sepolia-шкала) намеренно не используется: сравнивать его с
+    // deadlineBlock (CC3-шкала) нельзя — ровно этот баг чинился в этой ревизии.
+    function _processAndEmitEvent(uint8 action, bytes32 queryId, uint64, /* sourceHeight */ bytes memory encodedTransaction)
         internal
         override
     {
@@ -128,17 +136,11 @@ contract RepaymentBridge is TruthGateBase {
             require(amount > 0, "zero repayment amount");
 
             // Событие в нативных 6-dec USDC → долг/wUSDC в 18-dec
-            _processRepayment(queryId, sourceHeight, borrower, ccLoanId, amount * USDC_DECIMALS_SCALING);
+            _processRepayment(queryId, borrower, ccLoanId, amount * USDC_DECIMALS_SCALING);
         }
     }
 
-    function _processRepayment(
-        bytes32 queryId,
-        uint64 sourceHeight,
-        address borrower,
-        uint256 ccLoanId,
-        uint256 amount
-    ) internal {
+    function _processRepayment(bytes32 queryId, address borrower, uint256 ccLoanId, uint256 amount) internal {
         (
             address loanBorrower,
             uint256 principal,
@@ -146,15 +148,21 @@ contract RepaymentBridge is TruthGateBase {
             ,
             uint256 usdcRepaidShare,
             uint256 deadlineBlock,
-        , ) = CREDIT_CORE.loans(ccLoanId);
+            CreditCore.LoanStatus status,
+        ) = CREDIT_CORE.loans(ccLoanId);
 
         // Identity v1: платить через мост может только заёмщик займа (тот же EOA на
         // обоих чейнах) — чужой лок с чужим loanId не засчитывается
         require(loanBorrower == borrower, "borrower mismatch");
 
-        // Дедлайн по SOURCE-height: важен момент лока USDC на Sepolia, а не момент
-        // доставки proof'а на CC3 (доставку покрывает буфер)
-        require(sourceHeight <= deadlineBlock + DELIVERY_BUFFER_BLOCKS, "repayment past deadline");
+        // Две различимые причины отказа по времени (для worker/failed.json):
+        // 1) честная просрочка, зафиксированная протоколом (markLoanAsExpired);
+        require(status != CreditCore.LoanStatus.Expired, "loan expired");
+        // 2) доставка proof'а за пределами дедлайн + буфер — «протух по доставке»
+        //    (либо лок был поздним: доставка не бывает раньше лока). Обе стороны
+        //    сравнения — CC3-шкала: deadlineBlock пишется CreditCore.borrow из
+        //    block.number CC3.
+        require(block.number <= deadlineBlock + DELIVERY_BUFFER_BLOCKS, "repayment delivery window exceeded");
 
         // Лимит доли пути Б: не более 30% полной суммы возврата через USDC
         uint256 expectedRepayment = principal + interestDue;

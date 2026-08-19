@@ -26,7 +26,14 @@ contract RepaymentBridgeTest is Test {
 
     uint256 loanId;
     uint256 constant USDC_1 = 1e6; // 1 USDC в нативных 6-dec единицах
-    uint256 deadline; // 1 + LOAN_DURATION_BLOCKS
+    uint256 deadline; // CC3_HEAD + LOAN_DURATION_BLOCKS
+
+    // Реалистичные головы ОБЕИХ шкал (значения живого тестнета на момент бага
+    // «repayment past deadline»). Sepolia на ~6М блоков впереди CC3 — тесты с
+    // сопоставимыми высотами не ловят смешение шкал, поэтому вся сьюта работает
+    // на этих величинах.
+    uint256 constant CC3_HEAD = 5_337_133;
+    uint64 constant SEPOLIA_LOCK_HEIGHT = 11_497_229;
 
     bytes32 constant DEPOSIT_SIG = keccak256("FundsDeposited(address,uint256,uint256)");
     bytes32 constant LOCK_SIG = keccak256("UsdcLockedForRepayment(address,uint256,uint256)");
@@ -38,6 +45,8 @@ contract RepaymentBridgeTest is Test {
     }
 
     function setUp() public {
+        vm.roll(CC3_HEAD); // CC3-шкала должна радикально отличаться от Sepolia-шкалы
+
         vm.etch(PRECOMPILE, address(new MockNativeQueryVerifier()).code);
         mock = MockNativeQueryVerifier(PRECOMPILE);
 
@@ -58,7 +67,7 @@ contract RepaymentBridgeTest is Test {
         pool.stake{value: 100 ether}();
 
         // скоринг bob'а и займ 10 CTC (interestDue 0.5, cap пути Б = 10.5 * 30% = 3.15)
-        _executeOnCore(0, 50, _depositTx(bob, 1 ether));
+        _executeOnCore(0, SEPOLIA_LOCK_HEIGHT - 1000, _depositTx(bob, 1 ether));
         vm.prank(bob);
         loanId = core.borrow(10 ether);
         (, , , , , deadline, , ) = core.loans(loanId);
@@ -164,18 +173,48 @@ contract RepaymentBridgeTest is Test {
         _executeOnBridge(100, txData);
     }
 
-    function test_deadlineBySourceHeight_withDeliveryBuffer() public {
-        uint64 buffer = bridge.DELIVERY_BUFFER_BLOCKS();
+    // ---------- дедлайн пути Б: CC3-шкала на момент доставки ----------
+    // Регрессия на баг «repayment past deadline»: старый код сравнивал Sepolia-
+    // sourceHeight (~11.5М) с CC3-дедлайном (~5.44М) — ревертило ВСЕГДА.
 
-        // за пределами дедлайн + буфер — реверт
-        bytes memory lateTx = _lockTx(REPAYMENT_VAULT_ON_SEPOLIA, bob, loanId, 1 * USDC_1);
-        vm.expectRevert("repayment past deadline");
-        _executeOnBridge(uint64(deadline) + buffer + 1, lateTx);
+    function test_freshBridgeRepayment_realisticScales_passes() public {
+        // Sepolia-высота лока на ~6М больше CC3-дедлайна: при старой семантике
+        // этот тест ревертит, при новой (block.number CC3) — проходит
+        assertGt(uint256(SEPOLIA_LOCK_HEIGHT), deadline + bridge.DELIVERY_BUFFER_BLOCKS());
+        assertLe(block.number, deadline);
 
-        // после дедлайна, но в пределах буфера — проходит
-        _proveLock(uint64(deadline) + buffer, 1 * USDC_1);
+        _proveLock(SEPOLIA_LOCK_HEIGHT, 1 * USDC_1);
         (, , , uint256 repaid, , , , ) = core.loans(loanId);
         assertEq(repaid, 1 ether);
+    }
+
+    function test_overdueDelivery_realisticScales_reverts() public {
+        // Доставка за пределами дедлайн + буфер (CC3-шкала) — различимый текст
+        // «протух по доставке», не совпадающий с честной просрочкой
+        vm.roll(deadline + bridge.DELIVERY_BUFFER_BLOCKS() + 1);
+
+        bytes memory lateTx = _lockTx(REPAYMENT_VAULT_ON_SEPOLIA, bob, loanId, 1 * USDC_1);
+        vm.expectRevert("repayment delivery window exceeded");
+        _executeOnBridge(SEPOLIA_LOCK_HEIGHT, lateTx);
+    }
+
+    function test_deliveryAtExactBufferBoundary_passes() public {
+        // Ровно deadlineBlock + DELIVERY_BUFFER_BLOCKS — ещё проходит
+        vm.roll(deadline + bridge.DELIVERY_BUFFER_BLOCKS());
+
+        _proveLock(SEPOLIA_LOCK_HEIGHT, 1 * USDC_1);
+        (, , , uint256 repaid, , , , ) = core.loans(loanId);
+        assertEq(repaid, 1 ether);
+    }
+
+    function test_expiredLoan_distinctRevert() public {
+        // Честная просрочка, зафиксированная протоколом, — свой текст реверта
+        vm.roll(deadline + 1);
+        core.markLoanAsExpired(loanId);
+
+        bytes memory txData = _lockTx(REPAYMENT_VAULT_ON_SEPOLIA, bob, loanId, 1 * USDC_1);
+        vm.expectRevert("loan expired");
+        _executeOnBridge(SEPOLIA_LOCK_HEIGHT, txData);
     }
 
     function test_replayedProofReverts() public {
