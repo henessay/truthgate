@@ -16,7 +16,7 @@ type TabId = (typeof TABS)[number]['id'];
 
 export function App() {
   const [tab, setTab] = useState<TabId>('borrower');
-  const { address, hasWallet, connecting, connect, error } = useWallet();
+  const { address, hasWallet, connecting, connect, error, errorKind } = useWallet();
 
   return (
     <div className="shell">
@@ -54,7 +54,7 @@ export function App() {
         </div>
       </header>
 
-      {error && <p className="wallet-error">{error}</p>}
+      {error && <p className={errorKind === 'cancelled' ? 'wallet-note' : 'wallet-error'}>{error}</p>}
 
       <main className="content">
         {tab === 'borrower' && <BorrowerScreen />}

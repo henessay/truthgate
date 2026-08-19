@@ -36,6 +36,60 @@ export function injectedWallet(): Eip1193 | null {
   return (window as { ethereum?: Eip1193 }).ethereum ?? null;
 }
 
+interface WalletError {
+  code?: number;
+  message?: string;
+  data?: { code?: number; originalError?: { code?: number; message?: string } };
+}
+
+/** 4902 «сеть не добавлена»: MetaMask кладёт код то на верхний уровень, то в data. */
+function isUnrecognizedChain(err: unknown): boolean {
+  const e = err as WalletError;
+  if (e?.code === 4902 || e?.data?.code === 4902 || e?.data?.originalError?.code === 4902) return true;
+  const msg = `${e?.message ?? ''} ${e?.data?.originalError?.message ?? ''}`;
+  return /unrecognized chain|try adding the chain/i.test(msg);
+}
+
+/** 4001 — пользователь отклонил запрос в кошельке. */
+export function isUserRejection(err: unknown): boolean {
+  const e = err as WalletError;
+  if (e?.code === 4001 || e?.data?.code === 4001 || e?.data?.originalError?.code === 4001) return true;
+  return /user rejected|user denied/i.test(e?.message ?? '');
+}
+
+async function isOnCc3(eth: Eip1193): Promise<boolean> {
+  try {
+    const id = (await eth.request({ method: 'eth_chainId' })) as string;
+    return id?.toLowerCase() === CC3_CHAIN_PARAMS.chainId;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Гарантировать сеть CC3 в кошельке:
+ * switch → (4902, в т.ч. вложенный в data) → add с полными параметрами → switch.
+ * Некоторые кошельки после add уже стоят на добавленной сети — ошибка повторного
+ * switch не роняет флоу, если фактический chainId уже CC3.
+ */
+async function ensureCc3Chain(eth: Eip1193): Promise<void> {
+  try {
+    await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CC3_CHAIN_PARAMS.chainId }] });
+    return;
+  } catch (err) {
+    if (isUserRejection(err) || !isUnrecognizedChain(err)) throw err;
+  }
+
+  await eth.request({ method: 'wallet_addEthereumChain', params: [CC3_CHAIN_PARAMS] });
+
+  if (await isOnCc3(eth)) return;
+  try {
+    await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CC3_CHAIN_PARAMS.chainId }] });
+  } catch (err) {
+    if (!(await isOnCc3(eth))) throw err;
+  }
+}
+
 /**
  * Подключение MetaMask: запрос аккаунта + переключение (или добавление) сети CC3.
  * Возвращает signer, привязанный к CC3.
@@ -45,18 +99,17 @@ export async function connectWallet(): Promise<{ signer: JsonRpcSigner; address:
   if (!eth) throw new Error('MetaMask не найден: установите расширение');
 
   await eth.request({ method: 'eth_requestAccounts' });
-  try {
-    await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CC3_CHAIN_PARAMS.chainId }] });
-  } catch (err) {
-    // 4902 — сеть не добавлена в кошелёк
-    if ((err as { code?: number })?.code === 4902) {
-      await eth.request({ method: 'wallet_addEthereumChain', params: [CC3_CHAIN_PARAMS] });
-    } else {
-      throw err;
-    }
-  }
+  await ensureCc3Chain(eth);
 
   const browser = new BrowserProvider(eth as never, CC3_CHAIN_ID);
   const signer = await browser.getSigner();
   return { signer, address: await signer.getAddress() };
+}
+
+/** Человеческое сообщение вместо технического текста ошибки кошелька. */
+export function friendlyWalletError(err: unknown): string {
+  if (isUserRejection(err)) return 'Подключение отменено в кошельке';
+  const msg = (err as Error)?.message ?? String(err);
+  if (/MetaMask не найден/.test(msg)) return msg;
+  return `Не удалось подключить кошелёк: ${msg.slice(0, 120)}`;
 }

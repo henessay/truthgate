@@ -45,5 +45,6 @@
 .wallet-btn { padding: 8px 16px; font-size: 13px; }
 .wallet-addr { font-size: 13px; padding: 6px 14px; }
 .wallet-error { color: var(--red); font-size: 13px; margin: -14px 0 14px; }
+.wallet-note { color: var(--amber); font-size: 13px; margin: -14px 0 14px; }
 
 .content { min-height: 60vh; }
