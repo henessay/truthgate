@@ -33,8 +33,17 @@ contract CreditCore is TruthGateBase {
     /// @notice Фиксированная ставка v1: 500 = 5% на срок займа.
     uint256 public constant INTEREST_RATE_BPS = 500;
     uint256 internal constant BPS_DENOMINATOR = 10_000;
-    /// @notice Срок займа в блоках CC3 (дедлайн пути А).
-    uint256 public constant LOAN_DURATION_BLOCKS = 100_000;
+    /// @notice Продовый срок займа в блоках CC3 (~17 суток при 15 с/блок) —
+    /// дефолт конструктора (передан 0 → берётся это значение).
+    uint256 public constant DEFAULT_LOAN_DURATION_BLOCKS = 100_000;
+    /// @notice Продовый минимальный срок удержания для localScore: четверть срока.
+    uint256 public constant DEFAULT_MIN_HOLD_BLOCKS = DEFAULT_LOAN_DURATION_BLOCKS / 4;
+    /// @notice Срок займа в блоках CC3 (дедлайн пути А). Конструкторный параметр:
+    /// на демо-деплое сжимается (~240 блоков ≈ 1 час) ради наблюдаемости полного
+    /// цикла «занял → подержал → погасил → лимит вырос»; экономика формулы
+    /// localScore от сжатия не меняется (award зависит от ДОЛИ срока удержания —
+    /// см. тест подобия test_scoreScaleInvariantUnderCompressedSchedule).
+    uint256 public immutable LOAN_DURATION_BLOCKS;
     /// @notice Максимум открытых займов на заёмщика (ограничивает цикл проверки просрочки).
     uint256 public constant MAX_OPEN_LOANS = 8;
 
@@ -50,10 +59,18 @@ contract CreditCore is TruthGateBase {
     uint256 public constant SCORE_SLOPE_NUM = 10;
     uint256 public constant SCORE_SLOPE_DEN = 1;
     uint256 public constant MAX_BASE_LIMIT = 500 ether;
-    /// @notice Бонус к лимиту: +1 CTC за единицу localScore.
+    /// @notice Бонус к лимиту: +1 CTC за единицу localScore (единица = 1e18, см. Borrower.localScore).
     uint256 public constant LOCAL_SCORE_K = 1 ether;
-    /// @notice Прирост localScore за полностью погашенный займ на CC3.
-    uint256 public constant LOCAL_SCORE_PER_LOAN = 1;
+    /// @notice Нормировочный принципал localScore: полный срок удержания этого тела
+    /// даёт ровно одну единицу localScore (= +LOCAL_SCORE_K к лимиту). 4.5 CTC —
+    /// середина типового займа демо-масштаба (4–5 CTC), чтобы прирост лимита за
+    /// «нормальный» погашенный займ совпадал с прежней моделью «+1 за погашение».
+    uint256 public constant LOCAL_SCORE_NORM_PRINCIPAL = 4.5 ether;
+    /// @notice Минимальный срок удержания займа для начисления localScore (в блоках
+    /// CC3). Четверть срока: короче — сигнал платёжной дисциплины неотличим от
+    /// накрутки мгновенными циклами; погашение раньше порога проходит штатно
+    /// (тело + процент), но скор не растит. Конструкторный параметр (0 → прод-дефолт).
+    uint256 public immutable MIN_HOLD_BLOCKS;
     /// @notice Штраф к процентной части при просроченном погашении: +50%.
     uint256 public constant LATE_PENALTY_BPS = 5000;
     /// @notice Кэп суммарного вклада ДЕПОЗИТОВ в ethScore на заёмщика. Депозиты — слабый
@@ -92,7 +109,10 @@ contract CreditCore is TruthGateBase {
 
     struct Borrower {
         uint256 ethScore; // растёт ТОЛЬКО из доказанных Sepolia-событий
-        uint256 localScore; // растёт за погашенные займы на CC3
+        // Растёт за погашенные займы на CC3 пропорционально принятому риску:
+        // principal × heldBlocks / LOAN_DURATION_BLOCKS (см. _localScoreDelta).
+        // Единицы: 1e18 = одна единица скора (= +LOCAL_SCORE_K к лимиту).
+        uint256 localScore;
         uint256 openDebt; // суммарный непогашенный долг (тело + процент)
         uint256 loansCompleted;
     }
@@ -127,9 +147,17 @@ contract CreditCore is TruthGateBase {
         _;
     }
 
-    constructor(address payable pool_) {
+    /// @param loanDurationBlocks_ 0 → DEFAULT_LOAN_DURATION_BLOCKS (прод); демо ~240.
+    /// @param minHoldBlocks_ 0 → DEFAULT_MIN_HOLD_BLOCKS (прод); демо ~60.
+    /// Сентинел 0 означает «порог по умолчанию»: деплой с буквально нулевым
+    /// MIN_HOLD (скор за мгновенное погашение) невозможен — и не нужен.
+    constructor(address payable pool_, uint256 loanDurationBlocks_, uint256 minHoldBlocks_) {
         require(pool_ != address(0), "zero pool");
         POOL = LPPool(pool_);
+
+        LOAN_DURATION_BLOCKS = loanDurationBlocks_ == 0 ? DEFAULT_LOAN_DURATION_BLOCKS : loanDurationBlocks_;
+        MIN_HOLD_BLOCKS = minHoldBlocks_ == 0 ? DEFAULT_MIN_HOLD_BLOCKS : minHoldBlocks_;
+        require(MIN_HOLD_BLOCKS <= LOAN_DURATION_BLOCKS, "min hold exceeds duration");
     }
 
     // ---------- Регистрация источников и моста ----------
@@ -232,7 +260,8 @@ contract CreditCore is TruthGateBase {
         uint256 base = BASE_LIMIT + ((b.ethScore - MIN_ETH_SCORE) * SCORE_SLOPE_NUM) / SCORE_SLOPE_DEN;
         if (base > MAX_BASE_LIMIT) base = MAX_BASE_LIMIT;
 
-        return base + b.localScore * LOCAL_SCORE_K;
+        // localScore хранится в 1e18-единицах → нормируем обратно к «штукам»
+        return base + (b.localScore * LOCAL_SCORE_K) / 1 ether;
     }
 
     // ---------- Займы ----------
@@ -404,7 +433,7 @@ contract CreditCore is TruthGateBase {
             loan.status = LoanStatus.Repaid;
             if (!late) {
                 b.loansCompleted += 1;
-                b.localScore += LOCAL_SCORE_PER_LOAN;
+                b.localScore += _localScoreDelta(loan);
             }
             _removeOpenLoan(loan.borrower, loanId);
             emit LoanRepaid(loanId);
@@ -416,6 +445,25 @@ contract CreditCore is TruthGateBase {
             }
             emit LoanPartiallyRepaid(loanId, amount, viaBridge);
         }
+    }
+
+    /// @dev Прирост localScore за полностью погашенный (не просроченный) займ —
+    /// пропорционален принятому пулом риску, а не факту погашения:
+    ///   delta = principal × min(heldBlocks, LOAN_DURATION_BLOCKS)
+    ///           / LOAN_DURATION_BLOCKS / LOCAL_SCORE_NORM_PRINCIPAL   (в 1e18-единицах)
+    /// heldBlocks — блоки CC3 от выдачи до закрывающего платежа; для пути Б это
+    /// момент доставки proof'а (creditRepaymentFromBridge), тоже CC3-шкала.
+    /// Момент выдачи не хранится отдельно: deadlineBlock − LOAN_DURATION_BLOCKS.
+    /// Защита от накрутки мгновенными циклами «занял—вернул»: короче
+    /// MIN_HOLD_BLOCKS — ноль; выше порога награда всё равно пропорциональна
+    /// amount × time, т.е. лимит нельзя купить дешевле уплаченного процента.
+    /// min()-кламп нужен пути Б: доставка в пределах DELIVERY_BUFFER_BLOCKS может
+    /// прийти чуть позже дедлайна — считается полным сроком, не больше.
+    function _localScoreDelta(Loan storage loan) internal view returns (uint256) {
+        uint256 held = block.number - (loan.deadlineBlock - LOAN_DURATION_BLOCKS);
+        if (held < MIN_HOLD_BLOCKS) return 0;
+        if (held > LOAN_DURATION_BLOCKS) held = LOAN_DURATION_BLOCKS;
+        return (loan.principal * held * 1 ether) / (LOAN_DURATION_BLOCKS * LOCAL_SCORE_NORM_PRINCIPAL);
     }
 
     function markLoanAsExpired(uint256 loanId) external onlyOwner {

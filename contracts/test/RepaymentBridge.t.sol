@@ -51,7 +51,7 @@ contract RepaymentBridgeTest is Test {
         mock = MockNativeQueryVerifier(PRECOMPILE);
 
         pool = new LPPool();
-        core = new CreditCore(payable(address(pool)));
+        core = new CreditCore(payable(address(pool)), 0, 0);
         bridge = new RepaymentBridge(address(core), payable(address(pool)));
         wusdc = bridge.WUSDC();
 

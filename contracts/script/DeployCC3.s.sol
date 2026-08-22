@@ -21,7 +21,9 @@ contract DeployCC3 is Script {
 
         vm.startBroadcast(pk);
         LPPool pool = new LPPool();
-        CreditCore core = new CreditCore(payable(address(pool)));
+        // 0,0 → прод-дефолты (100_000 / 25_000); демо-деплой передаёт сжатые
+        // значения через env в deploy-cc3.sh (LOAN_DURATION_BLOCKS / MIN_HOLD_BLOCKS)
+        CreditCore core = new CreditCore(payable(address(pool)), 0, 0);
         RepaymentBridge bridge = new RepaymentBridge(address(core), payable(address(pool)));
 
         pool.setCreditCore(address(core));

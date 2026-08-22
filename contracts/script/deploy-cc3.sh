@@ -151,7 +151,12 @@ LIBS=(--libraries "$DECODER_SRC:EvmV1Decoder:$DECODER")
 
 deploy_or_reuse "LPPool" src/cc3/LPPool.sol:LPPool
 POOL="$DEPLOYED_ADDR"
-deploy_or_reuse "CreditCore" src/cc3/CreditCore.sol:CreditCore "${LIBS[@]}" --constructor-args "$POOL"
+# Временные параметры скоринга: 0 0 → прод-дефолты (100_000 / 25_000 блоков CC3).
+# Демо-деплой (наблюдаемость цикла «занял→подержал→погасил→лимит вырос» за ~1 час):
+#   LOAN_DURATION_BLOCKS=240 MIN_HOLD_BLOCKS=60 ./deploy-cc3.sh
+LOAN_DURATION_BLOCKS="${LOAN_DURATION_BLOCKS:-0}"
+MIN_HOLD_BLOCKS="${MIN_HOLD_BLOCKS:-0}"
+deploy_or_reuse "CreditCore" src/cc3/CreditCore.sol:CreditCore "${LIBS[@]}" --constructor-args "$POOL" "$LOAN_DURATION_BLOCKS" "$MIN_HOLD_BLOCKS"
 CORE="$DEPLOYED_ADDR"
 deploy_or_reuse "RepaymentBridge" src/cc3/RepaymentBridge.sol:RepaymentBridge "${LIBS[@]}" --constructor-args "$CORE" "$POOL"
 BRIDGE="$DEPLOYED_ADDR"
@@ -199,6 +204,9 @@ check "RepaymentBridge.CREDIT_CORE"          "$BRIDGE" "CREDIT_CORE()(address)" 
 check "RepaymentBridge.POOL"                 "$BRIDGE" "POOL()(address)"                    "$POOL"
 check "RepaymentBridge.repaymentVaultOnSepolia" "$BRIDGE" "repaymentVaultOnSepolia()(address)" "$REPAYMENT_VAULT"
 check "RepaymentBridge.WUSDC"                "$BRIDGE" "WUSDC()(address)"                   "$WUSDC"
+# эффективные временные параметры скоринга (0 в env → прод-дефолт контракта)
+check "CreditCore.LOAN_DURATION_BLOCKS"      "$CORE"   "LOAN_DURATION_BLOCKS()(uint256)"    "$(( LOAN_DURATION_BLOCKS == 0 ? 100000 : LOAN_DURATION_BLOCKS ))"
+check "CreditCore.MIN_HOLD_BLOCKS"           "$CORE"   "MIN_HOLD_BLOCKS()(uint256)"         "$(( MIN_HOLD_BLOCKS == 0 ? 25000 : MIN_HOLD_BLOCKS ))"
 if [[ -n "${MIN_ACCEPTED_HEIGHT:-}" ]]; then
     check "CreditCore.minAcceptedHeight"      "$CORE"   "minAcceptedHeight()(uint64)"        "$MIN_ACCEPTED_HEIGHT"
     check "RepaymentBridge.minAcceptedHeight" "$BRIDGE" "minAcceptedHeight()(uint64)"        "$MIN_ACCEPTED_HEIGHT"

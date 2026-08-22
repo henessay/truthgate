@@ -34,7 +34,7 @@ contract EventParityTest is Test {
         usdc = new TestUSDC();
         repayVault = new RepaymentVault(address(usdc));
 
-        core = new CreditCore(payable(address(1)));
+        core = new CreditCore(payable(address(1)), 0, 0);
         bridge = new RepaymentBridge(address(core), payable(address(1)));
     }
 
