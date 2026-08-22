@@ -15,8 +15,8 @@ contract RepaymentBridgeTest is Test {
     address constant REPAYMENT_VAULT_ON_SEPOLIA = address(0x5AFE);
 
     address alice = address(0xA11CE); // LP
-    address bob = address(0xB0B); // заёмщик
-    address carol = address(0xCA401); // покупатель wUSDC
+    address bob = address(0xB0B); // borrower
+    address carol = address(0xCA401); // wUSDC buyer
 
     MockNativeQueryVerifier mock;
     LPPool pool;
@@ -25,13 +25,13 @@ contract RepaymentBridgeTest is Test {
     WrappedUSDC wusdc;
 
     uint256 loanId;
-    uint256 constant USDC_1 = 1e6; // 1 USDC в нативных 6-dec единицах
+    uint256 constant USDC_1 = 1e6; // 1 USDC in native 6-dec units
     uint256 deadline; // CC3_HEAD + LOAN_DURATION_BLOCKS
 
-    // Реалистичные головы ОБЕИХ шкал (значения живого тестнета на момент бага
-    // «repayment past deadline»). Sepolia на ~6М блоков впереди CC3 — тесты с
-    // сопоставимыми высотами не ловят смешение шкал, поэтому вся сьюта работает
-    // на этих величинах.
+    // Realistic heads of BOTH scales (live-testnet values at the time of the
+    // "repayment past deadline" bug). Sepolia is ~6M blocks ahead of CC3 — tests
+    // with comparable heights would not catch scale mixing, so the whole suite
+    // runs on these magnitudes.
     uint256 constant CC3_HEAD = 5_337_133;
     uint64 constant SEPOLIA_LOCK_HEIGHT = 11_497_229;
 
@@ -45,7 +45,7 @@ contract RepaymentBridgeTest is Test {
     }
 
     function setUp() public {
-        vm.roll(CC3_HEAD); // CC3-шкала должна радикально отличаться от Sepolia-шкалы
+        vm.roll(CC3_HEAD); // the CC3 scale must differ radically from the Sepolia scale
 
         vm.etch(PRECOMPILE, address(new MockNativeQueryVerifier()).code);
         mock = MockNativeQueryVerifier(PRECOMPILE);
@@ -66,7 +66,7 @@ contract RepaymentBridgeTest is Test {
         vm.prank(alice);
         pool.stake{value: 100 ether}();
 
-        // скоринг bob'а и займ 10 CTC (interestDue 0.5, cap пути Б = 10.5 * 30% = 3.15)
+        // score bob and take a 10 CTC loan (interestDue 0.5, path B cap = 10.5 * 30% = 3.15)
         _executeOnCore(0, SEPOLIA_LOCK_HEIGHT - 1000, _depositTx(bob, 1 ether));
         vm.prank(bob);
         loanId = core.borrow(10 ether);
@@ -127,7 +127,7 @@ contract RepaymentBridgeTest is Test {
         _executeOnBridge(height, _lockTx(REPAYMENT_VAULT_ON_SEPOLIA, bob, loanId, amount));
     }
 
-    // ---------- путь Б ----------
+    // ---------- path B ----------
 
     function test_lockEventSignatureConstant() public view {
         assertEq(bridge.LOCK_EVENT_SIGNATURE(), LOCK_SIG);
@@ -136,10 +136,10 @@ contract RepaymentBridgeTest is Test {
     function test_happyPath_proofMintsWusdcAndReducesDebt() public {
         _proveLock(100, 3 * USDC_1);
 
-        // wUSDC в казне моста
+        // wUSDC in the bridge treasury
         assertEq(wusdc.balanceOf(address(bridge)), 3 ether);
 
-        // долг уменьшен в CreditCore, доля пути Б помечена
+        // debt reduced in CreditCore, the path B share is marked
         (, , , uint256 repaid, uint256 usdcShare, , CreditCore.LoanStatus status, ) = core.loans(loanId);
         assertEq(repaid, 3 ether);
         assertEq(usdcShare, 3 ether);
@@ -148,13 +148,13 @@ contract RepaymentBridgeTest is Test {
         (, , uint256 openDebt, ) = core.borrowers(bob);
         assertEq(openDebt, 7.5 ether);
 
-        // CTC не двигался: пул нетронут до сеттлмента SwapDesk'ом
+        // no CTC moved: the pool is untouched until the SwapDesk settlement
         assertEq(address(pool).balance, 90 ether);
         assertEq(pool.outstandingPrincipal(), 10 ether);
     }
 
     function test_usdcShareCapExceededReverts() public {
-        _proveLock(100, 3 * USDC_1); // ровно под кэпом 3.15
+        _proveLock(100, 3 * USDC_1); // just under the 3.15 cap
 
         // 3 + 0.2 = 3.2 > 3.15
         vm.expectRevert("USDC share cap exceeded");
@@ -173,13 +173,13 @@ contract RepaymentBridgeTest is Test {
         _executeOnBridge(100, txData);
     }
 
-    // ---------- дедлайн пути Б: CC3-шкала на момент доставки ----------
-    // Регрессия на баг «repayment past deadline»: старый код сравнивал Sepolia-
-    // sourceHeight (~11.5М) с CC3-дедлайном (~5.44М) — ревертило ВСЕГДА.
+    // ---------- path B deadline: CC3 scale at delivery time ----------
+    // Regression for the "repayment past deadline" bug: the old code compared the
+    // Sepolia sourceHeight (~11.5M) against the CC3 deadline (~5.44M) — it ALWAYS reverted.
 
     function test_freshBridgeRepayment_realisticScales_passes() public {
-        // Sepolia-высота лока на ~6М больше CC3-дедлайна: при старой семантике
-        // этот тест ревертит, при новой (block.number CC3) — проходит
+        // The Sepolia lock height is ~6M above the CC3 deadline: under the old
+        // semantics this test reverts, under the new one (CC3 block.number) it passes
         assertGt(uint256(SEPOLIA_LOCK_HEIGHT), deadline + bridge.DELIVERY_BUFFER_BLOCKS());
         assertLe(block.number, deadline);
 
@@ -189,8 +189,8 @@ contract RepaymentBridgeTest is Test {
     }
 
     function test_overdueDelivery_realisticScales_reverts() public {
-        // Доставка за пределами дедлайн + буфер (CC3-шкала) — различимый текст
-        // «протух по доставке», не совпадающий с честной просрочкой
+        // Delivery beyond deadline + buffer (CC3 scale) — a distinct "stale on
+        // delivery" revert text, different from a genuine overdue loan
         vm.roll(deadline + bridge.DELIVERY_BUFFER_BLOCKS() + 1);
 
         bytes memory lateTx = _lockTx(REPAYMENT_VAULT_ON_SEPOLIA, bob, loanId, 1 * USDC_1);
@@ -199,7 +199,7 @@ contract RepaymentBridgeTest is Test {
     }
 
     function test_deliveryAtExactBufferBoundary_passes() public {
-        // Ровно deadlineBlock + DELIVERY_BUFFER_BLOCKS — ещё проходит
+        // Exactly deadlineBlock + DELIVERY_BUFFER_BLOCKS — still passes
         vm.roll(deadline + bridge.DELIVERY_BUFFER_BLOCKS());
 
         _proveLock(SEPOLIA_LOCK_HEIGHT, 1 * USDC_1);
@@ -207,31 +207,31 @@ contract RepaymentBridgeTest is Test {
         assertEq(repaid, 1 ether);
     }
 
-    // ---------- инвариант №4 (CLAUDE.md): queryId помечен ⟺ все эффекты применены ----------
+    // ---------- invariant #4 (CLAUDE.md): queryId marked ⟺ all effects applied ----------
 
-    /// @dev Реплика TruthGateBase._computeQueryId: keccak256(chainKey ‖ height ‖ txIndex),
-    /// txIndex мока = 0. Ломается при изменении формулы queryId — это намеренно.
+    /// @dev Replica of TruthGateBase._computeQueryId: keccak256(chainKey ‖ height ‖ txIndex),
+    /// the mock's txIndex = 0. Breaks if the queryId formula changes — intentionally so.
     function _queryId(uint64 height) internal pure returns (bytes32) {
         return keccak256(abi.encodePacked(uint256(1), uint64(height), uint256(0)));
     }
 
     function test_invariant_queryIdMarkedIffEffectsApplied() public {
-        // ⟹ успех: queryId помечен И эффекты применены в той же транзакции
+        // ⟹ success: queryId marked AND effects applied in the same transaction
         _proveLock(SEPOLIA_LOCK_HEIGHT, 1 * USDC_1);
         assertTrue(bridge.processedQueries(_queryId(SEPOLIA_LOCK_HEIGHT)));
         (, , , uint256 repaid, , , , ) = core.loans(loanId);
         assertEq(repaid, 1 ether);
         assertEq(wusdc.totalSupply(), 1 ether);
 
-        // Попутно — семантика view'ов: totalDueFor ВАЛОВЫЙ (погашение его не меняет),
-        // outstandingDueFor — нетто-остаток
+        // Along the way — view semantics: totalDueFor is GROSS (repayment does not
+        // change it), outstandingDueFor is the net remainder
         assertEq(core.totalDueFor(loanId), 10.5 ether);
         assertEq(core.outstandingDueFor(loanId), 9.5 ether);
 
-        // ⟸ реверт ГЛУБОКО в обработчике, уже ПОСЛЕ минта wUSDC: гасим займ
-        // полностью путём А и доставляем ещё один лок — мост его пропустит
-        // (status Repaid ≠ Expired, кап не превышен), минт выполнится, а
-        // CreditCore.creditRepaymentFromBridge ревертнёт "invalid loan status"
+        // ⟸ a revert DEEP inside the handler, AFTER the wUSDC mint: repay the loan
+        // in full via path A and deliver one more lock — the bridge lets it through
+        // (status Repaid ≠ Expired, cap not exceeded), the mint executes, and
+        // CreditCore.creditRepaymentFromBridge reverts with "invalid loan status"
         vm.deal(bob, 9.5 ether);
         vm.prank(bob);
         core.repayInCTC{value: 9.5 ether}(loanId);
@@ -243,7 +243,7 @@ contract RepaymentBridgeTest is Test {
         vm.expectRevert("invalid loan status");
         _executeOnBridge(h2, tx2);
 
-        // Атомарный откат: ни queryId, ни минта, ни кредитного учёта
+        // Atomic rollback: no queryId, no mint, no credit accounting
         assertFalse(bridge.processedQueries(_queryId(h2)));
         assertEq(wusdc.totalSupply(), supplyBefore);
         (, , , uint256 repaidAfter, , , , ) = core.loans(loanId);
@@ -251,7 +251,7 @@ contract RepaymentBridgeTest is Test {
     }
 
     function test_expiredLoan_distinctRevert() public {
-        // Честная просрочка, зафиксированная протоколом, — свой текст реверта
+        // A genuine overdue loan, recorded by the protocol, has its own revert text
         vm.roll(deadline + 1);
         core.markLoanAsExpired(loanId);
 
@@ -264,7 +264,7 @@ contract RepaymentBridgeTest is Test {
         _proveLock(100, 1 * USDC_1);
 
         vm.expectRevert("Query already processed");
-        _proveLock(100, 1 * USDC_1); // тот же height + txIndex → тот же queryId
+        _proveLock(100, 1 * USDC_1); // same height + txIndex → same queryId
     }
 
     // ---------- SwapDesk ----------
@@ -272,7 +272,7 @@ contract RepaymentBridgeTest is Test {
     function test_treasuryFacesTrackInterestFirstSplit() public {
         _proveLock(100, 3 * USDC_1);
 
-        // разбиение процент-первым: из 3 wUSDC процент 0.5 (весь interestDue), тело 2.5
+        // interest-first split: out of 3 wUSDC, interest 0.5 (the whole interestDue), principal 2.5
         assertEq(bridge.treasuryInterestFace(), 0.5 ether);
         assertEq(bridge.treasuryPrincipalFace(), 2.5 ether);
         assertEq(
@@ -281,36 +281,36 @@ contract RepaymentBridgeTest is Test {
     }
 
     function test_swapWusdcForCtc_settlesPool() public {
-        _proveLock(100, 3 * USDC_1); // казна: тело 2.5, процент 0.5
+        _proveLock(100, 3 * USDC_1); // treasury: principal 2.5, interest 0.5
 
-        // carol покупает всю казну (3 wUSDC): платит 3 * 95% = 2.85 CTC
+        // carol buys the whole treasury (3 wUSDC): pays 3 * 95% = 2.85 CTC
         vm.deal(carol, 2.85 ether);
         vm.prank(carol);
         bridge.swapWusdcForCtc{value: 2.85 ether}(3 ether);
 
-        // wUSDC у покупателя, казна пуста
+        // wUSDC with the buyer, treasury empty
         assertEq(wusdc.balanceOf(carol), 3 ether);
         assertEq(wusdc.balanceOf(address(bridge)), 0);
         assertEq(bridge.treasuryPrincipalFace(), 0);
         assertEq(bridge.treasuryInterestFace(), 0);
 
-        // CTC ушёл в пул целиком, мост ничего не оставил себе
+        // all CTC went to the pool, the bridge kept nothing for itself
         assertEq(address(pool).balance, 92.85 ether);
         assertEq(address(bridge).balance, 0);
 
-        // принципал высвобожден РОВНО на проданный номинал тела (2.5, полностью
-        // покрыт cash'ем); дисконт 0.15 съела процентная часть (0.5 → 0.35 cash)
+        // principal released for EXACTLY the sold principal face value (2.5, fully
+        // covered by cash); the 0.15 discount was absorbed by the interest part (0.5 → 0.35 cash)
         assertEq(pool.outstandingPrincipal(), 7.5 ether);
     }
 
     function test_lpShareNotDilutedByFullPathB_cycle() public {
-        // цена доли до выдачи займа: пул 100 CTC на 100 долей = 1e18
-        // (займ из setUp ещё не менял активы: 90 баланс + 10 outstanding = 100)
+        // share price before loan origination: pool of 100 CTC over 100 shares = 1e18
+        // (the setUp loan has not changed the assets yet: 90 balance + 10 outstanding = 100)
         uint256 priceBefore = (pool.totalAssets() * 1e18) / pool.totalShares();
         assertEq(priceBefore, 1e18);
 
-        // полный цикл: максимум долга через мост (3 из 10.5, под кэпом 30%),
-        // остаток 7.5 путём А, затем полный своп казны
+        // full cycle: maximum debt via the bridge (3 out of 10.5, under the 30% cap),
+        // the remaining 7.5 via path A, then a full treasury swap
         _proveLock(100, 3 * USDC_1);
         vm.deal(bob, 7.5 ether);
         vm.prank(bob);
@@ -320,11 +320,11 @@ contract RepaymentBridgeTest is Test {
         vm.prank(carol);
         bridge.swapWusdcForCtc{value: 2.85 ether}(3 ether);
 
-        // весь принципал восстановлен: 7.5 путём А + 2.5 через settle
+        // all principal recovered: 7.5 via path A + 2.5 via settle
         assertEq(pool.outstandingPrincipal(), 0);
 
-        // LP-доля не дешевле, чем до выдачи: процентная маржа (0.5) перекрыла
-        // дисконт (0.15) → активы 100.35 на 100 долей
+        // the LP share is no cheaper than before origination: the interest margin (0.5)
+        // outweighed the discount (0.15) → assets 100.35 over 100 shares
         uint256 priceAfter = (pool.totalAssets() * 1e18) / pool.totalShares();
         assertGe(priceAfter, priceBefore);
         assertEq(pool.totalAssets(), 100.35 ether);
@@ -333,21 +333,21 @@ contract RepaymentBridgeTest is Test {
     function test_swapPartialAmount() public {
         _proveLock(100, 3 * USDC_1);
 
-        // частичный своп 2 wUSDC: платит 1.9 CTC
+        // partial swap of 2 wUSDC: pays 1.9 CTC
         vm.deal(carol, 1.9 ether);
         vm.prank(carol);
         bridge.swapWusdcForCtc{value: 1.9 ether}(2 ether);
 
-        // wUSDC у покупателя, казна уменьшилась
+        // wUSDC with the buyer, treasury reduced
         assertEq(wusdc.balanceOf(carol), 2 ether);
         assertEq(wusdc.balanceOf(address(bridge)), 1 ether);
 
-        // CTC ушёл в пул, мост ничего не оставил себе
+        // CTC went to the pool, the bridge kept nothing for itself
         assertEq(address(pool).balance, 91.9 ether);
         assertEq(address(bridge).balance, 0);
 
-        // пропорциональное списание: продано тела 2 * 2.5/3 = 1.666…, ровно на него
-        // высвобожден принципал (cash-покрытие: 1.9 >= 1.666…)
+        // pro-rata accounting: principal sold 2 * 2.5/3 = 1.666…, principal released
+        // for exactly that amount (cash coverage: 1.9 >= 1.666…)
         uint256 principalFaceSold = (2 ether * 2.5 ether) / uint256(3 ether);
         assertEq(bridge.treasuryPrincipalFace(), 2.5 ether - principalFaceSold);
         assertEq(pool.outstandingPrincipal(), 10 ether - principalFaceSold);
@@ -359,6 +359,6 @@ contract RepaymentBridgeTest is Test {
         vm.deal(carol, 2 ether);
         vm.prank(carol);
         vm.expectRevert("wrong CTC amount");
-        bridge.swapWusdcForCtc{value: 2 ether}(2 ether); // без дисконта — неверная сумма
+        bridge.swapWusdcForCtc{value: 2 ether}(2 ether); // discount not applied — wrong amount
     }
 }

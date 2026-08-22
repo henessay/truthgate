@@ -12,9 +12,9 @@ interface WatchedContract {
 }
 
 /**
- * Пул Sepolia-провайдеров: первый URL — основной, при ошибке провайдера
- * cli зовёт rotate() и следующий poll идёт через запасной RPC.
- * Watched-контракты пересоздаются под текущий провайдер.
+ * Sepolia provider pool: the first URL is the primary; on a provider error the
+ * cli calls rotate() and the next poll goes through a backup RPC.
+ * Watched contracts are rebuilt against the current provider.
  */
 export class SepoliaRpcPool {
   private index = 0;
@@ -26,7 +26,7 @@ export class SepoliaRpcPool {
     private readonly deployments: Deployments,
   ) {
     if (urls.length === 0) throw new Error('SEPOLIA_RPC: empty RPC list');
-    // staticNetwork: не ходить за chainId при старте (мертвый первый RPC не блокирует)
+    // staticNetwork: skip the chainId fetch at startup (a dead first RPC does not block)
     this.providers = urls.map((u) => new JsonRpcProvider(u, 11_155_111, { staticNetwork: true }));
     this.watchedCache = buildWatchedContracts(this.provider, deployments);
   }
@@ -95,22 +95,23 @@ export function toPendingEvent(ev: EventLog, eventName: keyof typeof EVENT_ROUTE
   };
 }
 
-// Ошибки лимита диапазона eth_getLogs у бесплатных провайдеров
+// eth_getLogs range-limit errors from free-tier providers
 // (Alchemy: "up to a 10 block range", Infura: "query returned more than …",
 // publicnode/BlastAPI: "limited to …" / "exceeds … range")
 const RANGE_ERROR_RE = /block range|range is too|limited to|too many (logs|results)|exceed\w* .*range|response size/i;
 
-// Текущий размер чанка: стартует с CONFIG.getLogsChunk, при ошибках диапазона
-// ужимается вдвое (до 1) и остаётся выученным на весь аптайм процесса
+// Current chunk size: starts at CONFIG.getLogsChunk; on range errors it is
+// halved (down to 1) and stays learned for the process's entire uptime
 let currentChunk = CONFIG.getLogsChunk;
 
 /**
- * Один проход поллинга: getLogs по трём контрактам от курсора до головы Sepolia
- * (чанками — бесплатные RPC режут широкие диапазоны). Дедуп по (txHash, logIndex)
- * против очереди и processedKeys. Возвращает число новых событий.
+ * One polling pass: getLogs over the three contracts from the cursor to the
+ * Sepolia head (in chunks — free RPCs reject wide ranges). Dedup by
+ * (txHash, logIndex) against the queue and processedKeys. Returns the number
+ * of new events.
  *
- * За проход сканируется не больше maxChunksPerPoll чанков: длинный бэкфилл
- * не должен блокировать обработку очереди — хвост доберётся на следующих тиках.
+ * At most maxChunksPerPoll chunks are scanned per pass: a long backfill must
+ * not block queue processing — the tail is picked up on subsequent ticks.
  */
 export async function pollOnce(
   provider: JsonRpcProvider,
@@ -120,8 +121,8 @@ export async function pollOnce(
   const head = await provider.getBlockNumber();
 
   if (state.lastProcessedBlock === 0) {
-    // Первая инициализация: head − lookback, чтобы событие, отправленное
-    // до запуска worker'а, не потерялось (дальше сканируем как обычно)
+    // First initialization: head − lookback, so an event sent before the
+    // worker started is not lost (afterwards we scan as usual)
     state.lastProcessedBlock = Math.max(head - CONFIG.startLookbackBlocks, 0);
     log.info('watcher:cursor-initialized', {
       head,
@@ -164,8 +165,8 @@ export async function pollOnce(
     } catch (err) {
       const message = (err as Error)?.message ?? String(err);
       if (RANGE_ERROR_RE.test(message) && currentChunk > 1) {
-        // Провайдер режет диапазон: ужимаем чанк и повторяем ТОТ ЖЕ from —
-        // курсор не двигается, уже добавленные события отфильтрует known
+        // Provider rejects the range: shrink the chunk and retry the SAME from —
+        // the cursor does not move; already-added events are filtered by `known`
         currentChunk = Math.max(1, Math.floor(currentChunk / 2));
         log.warn('watcher:chunk-reduced', { newChunk: currentChunk, from, to, reason: message });
         continue;

@@ -1,9 +1,9 @@
 import type { WorkerFailedDto, WorkerLogEvent, WorkerQueueItem } from '../../lib/workerApi';
 
 /**
- * Сборка карточек пайплайна из потока лог-событий worker'а.
- * Worker обрабатывает события строго по одному, поэтому события фаз без key
- * (attestation:*, proof-generation) привязываются к последнему phase:pipeline:start.
+ * Builds pipeline cards from the worker's log-event stream.
+ * The worker processes events strictly one at a time, so phase events without
+ * a key (attestation:*, proof-generation) attach to the latest phase:pipeline:start.
  */
 
 export type CardStatus = 'queued' | 'attestation' | 'proof' | 'execute' | 'done' | 'retry' | 'failed';
@@ -14,11 +14,11 @@ export interface PipelineCard {
   eventName?: string;
   source?: string;
   args?: Record<string, string>;
-  /** Sepolia-блок события — цель аттестации */
+  /** Sepolia block of the event — the attestation target */
   blockNumber?: number;
   status: CardStatus;
   attempts?: number;
-  /** attested-высота при первом наблюдении ожидания — базовая точка прогресса */
+  /** attested height when the wait was first observed — progress baseline */
   attestBaseline?: number;
   attestLatest?: number;
   gapBlocks?: number;
@@ -31,7 +31,7 @@ export interface PipelineCard {
   cc3Event?: string;
   error?: string;
   errorClass?: string;
-  /** Длительности завершённых фаз, мс: attestation / proof / execute / total */
+  /** Durations of completed phases, ms: attestation / proof / execute / total */
   durations: Record<string, number | undefined>;
   updatedAt: string;
 }
@@ -164,7 +164,7 @@ export function foldEvent(ctx: FoldCtx, ev: WorkerLogEvent): void {
       const c = card(ctx, key, ev.ts);
       c.status = 'retry';
       c.errorClass = 'attestation-pending';
-      c.error = 'ожидание аттестации, повтор через минуту';
+      c.error = 'waiting for attestation, retrying in a minute';
       ctx.currentKey = null;
       return;
     }
@@ -192,14 +192,14 @@ export function foldEvent(ctx: FoldCtx, ev: WorkerLogEvent): void {
   }
 }
 
-/** Короткая причина из полного revert-текста ethers. */
+/** Short reason extracted from the full ethers revert text. */
 export function shortReason(full: string | undefined): string {
-  if (!full) return 'ошибка';
+  if (!full) return 'error';
   const m = /execution reverted: "([^"]+)"/.exec(full) ?? /reason="([^"]+)"/.exec(full);
   return m ? m[1] : full.slice(0, 120);
 }
 
-/** Очередь из state.json → карточки (для событий, ждущих до старта пайплайна / после рестарта worker'а). */
+/** Queue from state.json → cards (for events waiting before the pipeline starts / after a worker restart). */
 export function mergeQueue(ctx: FoldCtx, queue: WorkerQueueItem[]): void {
   for (const q of queue) {
     const existing = ctx.cards.get(q.key);
@@ -217,7 +217,7 @@ export function mergeQueue(ctx: FoldCtx, queue: WorkerQueueItem[]): void {
   }
 }
 
-/** failed.json → терминальные карточки (переживают рестарт worker'а). */
+/** failed.json → terminal cards (survive a worker restart). */
 export function mergeFailed(ctx: FoldCtx, failed: WorkerFailedDto[]): void {
   for (const fEv of failed) {
     const c = card(ctx, fEv.key, fEv.failedAt);

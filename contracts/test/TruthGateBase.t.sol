@@ -141,7 +141,7 @@ contract TruthGateBaseTest is Test {
         return keccak256(abi.encodePacked(uint256(chainKey), height, txIndex));
     }
 
-    // ---------- (д) happy path reaches _processAndEmitEvent ----------
+    // ---------- (e) happy path reaches _processAndEmitEvent ----------
 
     function test_happyPath_reachesProcessAndEmitEvent() public {
         bool ok = _execute(1, HEIGHT, _happyTx());
@@ -156,7 +156,7 @@ contract TruthGateBaseTest is Test {
         assertTrue(gate.processedQueries(queryId));
     }
 
-    // ---------- (а) replay of the same proof reverts ----------
+    // ---------- (a) replay of the same proof reverts ----------
 
     function test_replayReverts() public {
         _execute(1, HEIGHT, _happyTx());
@@ -165,7 +165,7 @@ contract TruthGateBaseTest is Test {
         _execute(1, HEIGHT, _happyTx());
     }
 
-    // ---------- (б) wrong chainKey reverts before any precompile call ----------
+    // ---------- (b) wrong chainKey reverts before any precompile call ----------
 
     function test_wrongChainKey_revertsBeforeVerify() public {
         // If execute touched the precompile at all, these flags would surface the
@@ -177,7 +177,7 @@ contract TruthGateBaseTest is Test {
         _execute(2, HEIGHT, _happyTx());
     }
 
-    // ---------- (в) receiptStatus == 0 reverts ----------
+    // ---------- (c) receiptStatus == 0 reverts ----------
 
     function test_failedSourceTxReverts() public {
         LogTuple[] memory logs = new LogTuple[](1);
@@ -188,7 +188,7 @@ contract TruthGateBaseTest is Test {
         _execute(1, HEIGHT, revertedTx);
     }
 
-    // ---------- (г) log emitted by a foreign contract reverts ----------
+    // ---------- (d) log emitted by a foreign contract reverts ----------
 
     function test_logFromWrongSourceReverts() public {
         LogTuple[] memory logs = new LogTuple[](1);

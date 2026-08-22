@@ -9,7 +9,7 @@ import {
 } from '../../lib/workerApi';
 import { createFoldCtx, foldEvent, mergeFailed, mergeQueue, type PipelineCard } from './fold';
 
-/** Быстрый поллинг: ожидание аттестации должно ЗАМЕТНО двигаться. */
+/** Fast polling: the attestation wait must move VISIBLY. */
 const FAST_POLL_MS = 3_000;
 
 export function useAttestation() {
@@ -21,16 +21,16 @@ export function useAttestation() {
 }
 
 export interface WorkerLive {
-  online: boolean | null; // null = ещё не знаем
+  online: boolean | null; // null = not known yet
   cards: PipelineCard[];
   cursor: number | null;
   queueLength: number;
 }
 
 /**
- * Живая лента пайплайна: /api/events поллится с курсором seq и сворачивается
- * в карточки; state.json даёт очередь (и события до рестарта), failed.json —
- * терминальные отказы. Worker offline → online:false, карточки из последних данных.
+ * Live pipeline feed: /api/events is polled with a seq cursor and folded
+ * into cards; state.json provides the queue (and pre-restart events), failed.json —
+ * terminal failures. Worker offline → online:false, cards from the latest data.
  */
 export function useWorkerLive(): WorkerLive {
   const ctxRef = useRef(createFoldCtx());

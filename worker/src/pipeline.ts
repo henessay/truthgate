@@ -5,12 +5,12 @@ import { log, phase } from './logger.js';
 import { TRUTHGATE_EXECUTE_ABI } from './abi.js';
 import { appendFailed, type PendingEvent } from './state.js';
 
-/** Классы ошибок конвейера — определяют политику ретраев. */
+/** Pipeline error classes — they determine the retry policy. */
 export type ErrorClass =
-  | 'attestation-pending' // блок ещё не аттестован — ждать, попытки не тратим
-  | 'prover-unavailable' // prover API / сеть — ретрай с backoff
-  | 'execute-reverted' // контракт ревертнул — НЕ ретраить, в failed.json
-  | 'unknown'; // прочее — ретрай с backoff
+  | 'attestation-pending' // block not yet attested — wait, no attempts consumed
+  | 'prover-unavailable' // prover API / network — retry with backoff
+  | 'execute-reverted' // contract reverted — do NOT retry, goes to failed.json
+  | 'unknown'; // anything else — retry with backoff
 
 export interface PipelineDeps {
   cc3Provider: JsonRpcProvider;
@@ -31,7 +31,7 @@ export function buildPipelineDeps(d: Deployments): PipelineDeps {
       RepaymentBridge: new Contract(d.cc3.RepaymentBridge, TRUTHGATE_EXECUTE_ABI, wallet),
     },
     proofBuilder: new proofProvider.service.ProofBuilder(CONFIG.chainKey, CONFIG.proverApiUrl),
-    // Каст: SDK декларирует свой экземпляр типов ethers; рантайм-инстанс один и тот же
+    // Cast: the SDK declares its own copy of the ethers types; the runtime instance is the same
     info: new chainInfo.PrecompileChainInfoProvider(cc3Provider as never),
   };
 }
@@ -41,9 +41,9 @@ export function classifyError(err: unknown): ErrorClass {
   const msg = `${e?.shortMessage ?? ''} ${e?.message ?? ''}`.toLowerCase();
 
   if (msg.includes('not yet attested') || msg.includes('attestation timeout')) return 'attestation-pending';
-  // Реверт целевого контракта: ethers CALL_EXCEPTION (estimateGas или исполнение)
+  // Target contract revert: ethers CALL_EXCEPTION (estimateGas or execution)
   if (e?.code === 'CALL_EXCEPTION' || msg.includes('execution reverted')) return 'execute-reverted';
-  // Сеть/prover: любые транспортные ошибки — ретраябельны
+  // Network/prover: any transport error is retryable
   if (
     e?.code === 'NETWORK_ERROR' ||
     e?.code === 'TIMEOUT' ||
@@ -59,9 +59,9 @@ export function classifyError(err: unknown): ErrorClass {
 }
 
 /**
- * Ожидание аттестации source-блока на CC3 с логированием прогресса (реальное
- * время аттестации — критичная метрика демо). Поверх on-chain проверки ждём
- * готовность кэша prover'а (waitUntilHeightAttested).
+ * Wait for attestation of the source block on CC3 with progress logging (real
+ * attestation time is a critical demo metric). On top of the on-chain check we
+ * also wait for the prover cache to be ready (waitUntilHeightAttested).
  */
 async function waitForAttestation(deps: PipelineDeps, blockNumber: number): Promise<void> {
   const done = phase('attestation', { blockNumber });
@@ -85,7 +85,7 @@ async function waitForAttestation(deps: PipelineDeps, blockNumber: number): Prom
     await new Promise((r) => setTimeout(r, CONFIG.attestPollMs));
   }
 
-  // Кэш prover'а может отставать от on-chain аттестации — короткое доожидание
+  // The prover cache may lag behind on-chain attestation — a short extra wait
   await deps.proofBuilder.waitUntilHeightAttested(CONFIG.chainKey, blockNumber, 5_000, 120_000);
 
   done();
@@ -109,7 +109,7 @@ async function submitProof(
   const done = phase('execute-submit', { key: ev.key, target: ev.target });
   const contract = deps.targets[ev.target];
 
-  // Порядок аргументов — TruthGateBase.execute (сверено с контрактом)
+  // Argument order matches TruthGateBase.execute (verified against the contract)
   const args = [
     ev.action,
     proof.chainKey,
@@ -121,15 +121,15 @@ async function submitProof(
     proof.continuityProof.roots,
   ] as const;
 
-  // Gas: estimate + 35% буфер; у precompile-вызовов estimate бывает нестабилен —
-  // fallback по размеру continuity-proof'а (паттерн из примеров Gluwa)
+  // Gas: estimate + 35% buffer; estimates for precompile calls can be flaky —
+  // fallback based on continuity proof size (pattern from the Gluwa examples)
   let gasLimit: bigint;
   try {
     const estimated = await contract.execute.estimateGas(...args);
     gasLimit = (estimated * 135n) / 100n;
   } catch (err) {
-    // ВАЖНО: estimateGas ревертнулся — это может быть и настоящий реверт контракта.
-    // Классифицируем: CALL_EXCEPTION с reason → наверх (не ретраить).
+    // IMPORTANT: estimateGas reverted — this may be a genuine contract revert.
+    // Classify: CALL_EXCEPTION with a reason → rethrow (do not retry).
     if (classifyError(err) === 'execute-reverted' && (err as { reason?: string })?.reason) {
       throw err;
     }
@@ -148,7 +148,7 @@ async function submitProof(
     throw err;
   }
 
-  // Финализация: ищем целевое событие (EthScoreIncreased / UsdcRepaymentProcessed)
+  // Finalization: look for the target event (EthScoreIncreased / UsdcRepaymentProcessed)
   let queryId: string | undefined;
   for (const l of receipt.logs) {
     try {
@@ -158,7 +158,7 @@ async function submitProof(
         log.info('event:finalized-on-cc3', { key: ev.key, cc3Event: parsed.name, queryId, cc3TxHash: tx.hash });
       }
     } catch {
-      /* чужой лог — пропускаем */
+      /* foreign log — skip */
     }
   }
 
@@ -166,7 +166,7 @@ async function submitProof(
   return { cc3TxHash: tx.hash, queryId };
 }
 
-/** Полный конвейер одного события: attestation → proof → execute. Бросает при ошибке. */
+/** Full pipeline for a single event: attestation → proof → execute. Throws on error. */
 export async function processEvent(deps: PipelineDeps, ev: PendingEvent): Promise<void> {
   const done = phase('pipeline', { key: ev.key, eventName: ev.eventName, attempt: ev.attempts + 1 });
   await waitForAttestation(deps, ev.blockNumber);
@@ -175,26 +175,26 @@ export async function processEvent(deps: PipelineDeps, ev: PendingEvent): Promis
   done();
 }
 
-/** Обработка ошибки: политика по классу. Возвращает true, если событие завершено (failed). */
+/** Failure handling: policy by error class. Returns true if the event is finished (failed). */
 export function handleFailure(ev: PendingEvent, err: unknown): boolean {
   const errorClass = classifyError(err);
   const message = (err as Error)?.message ?? String(err);
 
   if (errorClass === 'attestation-pending') {
-    // Не ошибка — ждём аттестацию, попытки не тратим
+    // Not an error — waiting for attestation, no attempts consumed
     ev.notBeforeMs = Date.now() + 60_000;
     log.info('event:waiting-attestation', { key: ev.key, retryInMs: 60_000 });
     return false;
   }
 
   if (errorClass === 'execute-reverted') {
-    // НЕ ретраим: реверт детерминирован. Полный контекст — кандидат на разбор агентом.
+    // Do NOT retry: the revert is deterministic. Full context saved — a candidate for agent triage.
     log.error('event:failed-execute-reverted', { key: ev.key, error: message });
     appendFailed({ ...stripQueueFields(ev), failedAt: new Date().toISOString(), errorClass, fullError: message });
     return true;
   }
 
-  // prover-unavailable / unknown: экспоненциальный backoff, максимум maxAttempts
+  // prover-unavailable / unknown: exponential backoff, up to maxAttempts
   ev.attempts += 1;
   ev.lastError = message;
   if (ev.attempts >= CONFIG.maxAttempts) {

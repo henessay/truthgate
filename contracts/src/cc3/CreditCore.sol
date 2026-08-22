@@ -6,85 +6,88 @@ import {TruthGateBase} from "./TruthGateBase.sol";
 import {LPPool} from "./LPPool.sol";
 
 /// @title CreditCore
-/// @notice Кредитное ядро TruthGate на CC3. Скоринг растёт ТОЛЬКО из доказанных
-/// Sepolia-событий (через TruthGateBase.execute), займы выдаются из LPPool в нативном
-/// CTC, погашение — путь А (CTC сюда) или путь Б (wUSDC в казну RepaymentBridge,
-/// здесь только учёт).
+/// @notice TruthGate credit core on CC3. Scoring grows ONLY from proven Sepolia
+/// events (via TruthGateBase.execute), loans are issued from LPPool in native
+/// CTC, repayment is path A (CTC directly here) or path B (wUSDC into the
+/// RepaymentBridge treasury; only accounting happens here).
 contract CreditCore is TruthGateBase {
-    // ---------- Actions (скоринговые, приходят в execute) ----------
+    // ---------- Actions (scoring, arrive via execute) ----------
     enum ScoreActions {
-        ScoreDeposit, // 0: депозит в vault на Sepolia
-        ScoreRepayment // 1: погашение займа на Sepolia
+        ScoreDeposit, // 0: deposit into the vault on Sepolia
+        ScoreRepayment // 1: loan repayment on Sepolia
     }
     error InvalidAction(uint8 action);
 
-    // ---------- Сигнатуры потребляемых Sepolia-событий ----------
+    // ---------- Signatures of consumed Sepolia events ----------
     // keccak256("FundsDeposited(address,uint256,uint256)")
-    // событие: FundsDeposited(address indexed depositor, uint256 amount, uint256 nonce)
+    // event: FundsDeposited(address indexed depositor, uint256 amount, uint256 nonce)
     bytes32 public constant DEPOSIT_EVENT_SIGNATURE =
         0xbee4fe3675934fca827426c793623996a3079255089bda3a717019ffc5db2765;
 
     // keccak256("LoanRepaidOnEth(address,uint256,uint256)")
-    // событие: LoanRepaidOnEth(address indexed borrower, uint256 loanId, uint256 amount)
+    // event: LoanRepaidOnEth(address indexed borrower, uint256 loanId, uint256 amount)
     bytes32 public constant REPAY_EVENT_SIGNATURE =
         0x9d2dba8b6b5cbf171f55f328240634b55005b55f505bfe0ac482893b92d0fd88;
 
-    // ---------- Параметры кредитования (v1: фиксированные константы) ----------
-    /// @notice Фиксированная ставка v1: 500 = 5% на срок займа.
+    // ---------- Lending parameters (v1: fixed constants) ----------
+    /// @notice Fixed v1 rate: 500 = 5% for the loan term.
     uint256 public constant INTEREST_RATE_BPS = 500;
     uint256 internal constant BPS_DENOMINATOR = 10_000;
-    /// @notice Продовый срок займа в блоках CC3 (~17 суток при 15 с/блок) —
-    /// дефолт конструктора (передан 0 → берётся это значение).
+    /// @notice Production loan term in CC3 blocks (~17 days at 15 s/block) —
+    /// constructor default (0 passed → this value is used).
     uint256 public constant DEFAULT_LOAN_DURATION_BLOCKS = 100_000;
-    /// @notice Продовый минимальный срок удержания для localScore: четверть срока.
+    /// @notice Production minimum hold period for localScore: a quarter of the term.
     uint256 public constant DEFAULT_MIN_HOLD_BLOCKS = DEFAULT_LOAN_DURATION_BLOCKS / 4;
-    /// @notice Срок займа в блоках CC3 (дедлайн пути А). Конструкторный параметр:
-    /// на демо-деплое сжимается (~240 блоков ≈ 1 час) ради наблюдаемости полного
-    /// цикла «занял → подержал → погасил → лимит вырос»; экономика формулы
-    /// localScore от сжатия не меняется (award зависит от ДОЛИ срока удержания —
-    /// см. тест подобия test_scoreScaleInvariantUnderCompressedSchedule).
+    /// @notice Loan term in CC3 blocks (path A deadline). Constructor parameter:
+    /// the demo deployment compresses it (~240 blocks ≈ 1 hour) so the full
+    /// "borrow → hold → repay → limit grows" cycle is observable; the localScore
+    /// formula's economics is unchanged by compression (the award depends on the
+    /// FRACTION of the term held — see the similarity test
+    /// test_scoreScaleInvariantUnderCompressedSchedule).
     uint256 public immutable LOAN_DURATION_BLOCKS;
-    /// @notice Максимум открытых займов на заёмщика (ограничивает цикл проверки просрочки).
+    /// @notice Max open loans per borrower (bounds the overdue-check loop).
     uint256 public constant MAX_OPEN_LOANS = 8;
 
-    // Кусочно-линейная формула лимита:
-    //   ethScore < MIN_ETH_SCORE                 → лимит 0
-    //   иначе base = BASE_LIMIT + (ethScore - MIN_ETH_SCORE) * SCORE_SLOPE_NUM / SCORE_SLOPE_DEN,
-    //   base капится MAX_BASE_LIMIT; итог = base + localScore * LOCAL_SCORE_K.
-    /// @notice Минимальный ethScore (в wei депозитов на Sepolia) для доступа к кредиту.
+    // Piecewise-linear credit limit formula:
+    //   ethScore < MIN_ETH_SCORE                 → limit 0
+    //   else base = BASE_LIMIT + (ethScore - MIN_ETH_SCORE) * SCORE_SLOPE_NUM / SCORE_SLOPE_DEN,
+    //   base is capped at MAX_BASE_LIMIT; total = base + localScore * LOCAL_SCORE_K.
+    /// @notice Minimum ethScore (in wei of Sepolia deposits) to access credit.
     uint256 public constant MIN_ETH_SCORE = 1e16; // 0.01 ETH
-    /// @notice Первый лимит маленький: базовые 5 CTC на пороге MIN_ETH_SCORE.
+    /// @notice The first credit limit is small: a base of 5 CTC at the MIN_ETH_SCORE threshold.
     uint256 public constant BASE_LIMIT = 5 ether;
-    /// @notice +10 CTC лимита за каждый 1 ETH score сверх порога (10 wei CTC на 1 wei score).
+    /// @notice +10 CTC of limit per 1 ETH of score above the threshold (10 wei CTC per 1 wei score).
     uint256 public constant SCORE_SLOPE_NUM = 10;
     uint256 public constant SCORE_SLOPE_DEN = 1;
     uint256 public constant MAX_BASE_LIMIT = 500 ether;
-    /// @notice Бонус к лимиту: +1 CTC за единицу localScore (единица = 1e18, см. Borrower.localScore).
+    /// @notice Limit bonus: +1 CTC per unit of localScore (unit = 1e18, see Borrower.localScore).
     uint256 public constant LOCAL_SCORE_K = 1 ether;
-    /// @notice Нормировочный принципал localScore: полный срок удержания этого тела
-    /// даёт ровно одну единицу localScore (= +LOCAL_SCORE_K к лимиту). 4.5 CTC —
-    /// середина типового займа демо-масштаба (4–5 CTC), чтобы прирост лимита за
-    /// «нормальный» погашенный займ совпадал с прежней моделью «+1 за погашение».
+    /// @notice localScore normalization principal: holding this principal for the
+    /// full term yields exactly one localScore unit (= +LOCAL_SCORE_K to the limit).
+    /// 4.5 CTC is the midpoint of a typical demo-scale loan (4–5 CTC), so the limit
+    /// gain for a "normal" repaid loan matches the previous "+1 per repayment" model.
     uint256 public constant LOCAL_SCORE_NORM_PRINCIPAL = 4.5 ether;
-    /// @notice Минимальный срок удержания займа для начисления localScore (в блоках
-    /// CC3). Четверть срока: короче — сигнал платёжной дисциплины неотличим от
-    /// накрутки мгновенными циклами; погашение раньше порога проходит штатно
-    /// (тело + процент), но скор не растит. Конструкторный параметр (0 → прод-дефолт).
+    /// @notice Minimum loan hold period for localScore accrual (in CC3 blocks).
+    /// A quarter of the term: any shorter and the payment-discipline signal is
+    /// indistinguishable from score farming via instant cycles; repaying before the
+    /// threshold works normally (principal + interest) but does not grow the score.
+    /// Constructor parameter (0 → production default).
     uint256 public immutable MIN_HOLD_BLOCKS;
-    /// @notice Штраф к процентной части при просроченном погашении: +50%.
+    /// @notice Penalty on the interest part for an overdue repayment: +50%.
     uint256 public constant LATE_PENALTY_BPS = 5000;
-    /// @notice Кэп суммарного вклада ДЕПОЗИТОВ в ethScore на заёмщика. Депозиты — слабый
-    /// сигнал (накручиваются циркуляцией депозит→вывод→депозит тех же средств), поэтому
-    /// капятся; основной вес скора — погашения. Демо-масштаб: два средних депозита по
-    /// 1 ETH; сверх кэпа депозит верифицируется и эмитит событие, но скор не растит.
+    /// @notice Cap on the total DEPOSIT contribution to ethScore per borrower. Deposits
+    /// are a weak signal (farmable by circulating the same funds deposit→withdraw→deposit),
+    /// so they are capped; repayments carry the main score weight. Demo scale: two average
+    /// 1 ETH deposits; above the cap a deposit is still verified and emits the event,
+    /// but does not grow the score.
     uint256 public constant DEPOSIT_SCORE_CAP = 2 ether;
-    /// @notice Плоский бонус за каждый доказанный акт погашения на Sepolia: частота
-    /// платёжной дисциплины имеет собственный вес, не только объём.
+    /// @notice Flat bonus per proven repayment act on Sepolia: the frequency of
+    /// payment discipline carries its own weight, not just the volume.
     uint256 public constant FLAT_REPAYMENT_BONUS = 0.1 ether;
 
-    // ---------- Стейт-машина займа (форк USCLoanManager) ----------
+    // ---------- Loan state machine (USCLoanManager fork) ----------
     enum LoanStatus {
-        None, // 0 — слот не занят; явная защита от "нулевой займ выглядит как Created"
+        None, // 0 — slot unused; explicit guard against "zero loan looks like Created"
         Created,
         Funded,
         PartlyRepaid,
@@ -95,38 +98,39 @@ contract CreditCore is TruthGateBase {
     struct Loan {
         address borrower;
         uint256 principal;
-        uint256 interestDue; // фиксируется при выдаче: principal * INTEREST_RATE_BPS / 10000
-        uint256 repaidAmount; // аккумулируется по обоим путям
-        uint256 usdcRepaidShare; // доля, погашенная путём Б (лимит ~30% проверяет RepaymentBridge)
-        uint256 deadlineBlock; // дедлайн пути А в блоках CC3
+        uint256 interestDue; // fixed at issuance: principal * INTEREST_RATE_BPS / 10000
+        uint256 repaidAmount; // accumulated across both paths
+        uint256 usdcRepaidShare; // share repaid via path B (~30% cap enforced by RepaymentBridge)
+        uint256 deadlineBlock; // path A deadline in CC3 blocks
         LoanStatus status;
-        // Сколько из repaidAmount отнесено на тело. Путь А гасит тело первым (твёрдый
-        // CTC восстанавливает принципал пула), путь Б — процент первым (дисконт
-        // SwapDesk ложится на процентную маржу, не на тело). Поле добавлено в конец
-        // структуры, чтобы не менять позиции в существующем getter-кортеже.
+        // How much of repaidAmount is attributed to principal. Path A repays principal
+        // first (hard CTC restores the pool's principal), path B repays interest first
+        // (the SwapDesk discount falls on the interest margin, not the principal).
+        // Field appended at the end of the struct to keep positions in the existing
+        // getter tuple unchanged.
         uint256 principalRepaid;
     }
 
     struct Borrower {
-        uint256 ethScore; // растёт ТОЛЬКО из доказанных Sepolia-событий
-        // Растёт за погашенные займы на CC3 пропорционально принятому риску:
-        // principal × heldBlocks / LOAN_DURATION_BLOCKS (см. _localScoreDelta).
-        // Единицы: 1e18 = одна единица скора (= +LOCAL_SCORE_K к лимиту).
+        uint256 ethScore; // grows ONLY from proven Sepolia events
+        // Grows for repaid loans on CC3 in proportion to the risk taken:
+        // principal × heldBlocks / LOAN_DURATION_BLOCKS (see _localScoreDelta).
+        // Units: 1e18 = one score unit (= +LOCAL_SCORE_K to the limit).
         uint256 localScore;
-        uint256 openDebt; // суммарный непогашенный долг (тело + процент)
+        uint256 openDebt; // total outstanding debt (principal + interest)
         uint256 loansCompleted;
     }
 
     LPPool public immutable POOL;
 
-    address public vaultOnSepolia; // источник FundsDeposited
-    address public loanBookOnSepolia; // источник LoanRepaidOnEth
-    address public repaymentBridge; // единственный, кто может звать путь Б
+    address public vaultOnSepolia; // source of FundsDeposited
+    address public loanBookOnSepolia; // source of LoanRepaidOnEth
+    address public repaymentBridge; // the only caller allowed to invoke path B
 
     mapping(uint256 => Loan) public loans;
     mapping(address => Borrower) public borrowers;
     mapping(address => uint256[]) internal _openLoans;
-    /// @notice Сколько ethScore заёмщик уже набрал депозитами (для DEPOSIT_SCORE_CAP).
+    /// @notice How much ethScore the borrower has already earned via deposits (for DEPOSIT_SCORE_CAP).
     mapping(address => uint256) public depositScoreOf;
 
     uint256 public nextLoanId = 1;
@@ -147,10 +151,10 @@ contract CreditCore is TruthGateBase {
         _;
     }
 
-    /// @param loanDurationBlocks_ 0 → DEFAULT_LOAN_DURATION_BLOCKS (прод); демо ~240.
-    /// @param minHoldBlocks_ 0 → DEFAULT_MIN_HOLD_BLOCKS (прод); демо ~60.
-    /// Сентинел 0 означает «порог по умолчанию»: деплой с буквально нулевым
-    /// MIN_HOLD (скор за мгновенное погашение) невозможен — и не нужен.
+    /// @param loanDurationBlocks_ 0 → DEFAULT_LOAN_DURATION_BLOCKS (production); demo ~240.
+    /// @param minHoldBlocks_ 0 → DEFAULT_MIN_HOLD_BLOCKS (production); demo ~60.
+    /// The 0 sentinel means "default threshold": deploying with a literally zero
+    /// MIN_HOLD (score for instant repayment) is impossible — and unnecessary.
     constructor(address payable pool_, uint256 loanDurationBlocks_, uint256 minHoldBlocks_) {
         require(pool_ != address(0), "zero pool");
         POOL = LPPool(pool_);
@@ -160,7 +164,7 @@ contract CreditCore is TruthGateBase {
         require(MIN_HOLD_BLOCKS <= LOAN_DURATION_BLOCKS, "min hold exceeds duration");
     }
 
-    // ---------- Регистрация источников и моста ----------
+    // ---------- Registration of sources and the bridge ----------
 
     function registerVaultOnSepolia(address vault) external onlyOwner {
         require(vault != address(0), "zero vault");
@@ -180,11 +184,11 @@ contract CreditCore is TruthGateBase {
         emit RepaymentBridgeSet(bridge);
     }
 
-    // ---------- Скоринг: приём доказанных Sepolia-событий ----------
+    // ---------- Scoring: intake of proven Sepolia events ----------
 
-    // Окно свежести (minAcceptedHeight) применяется к скоринговым action'ам.
-    // Погашения пути Б в execute не приходят вовсе (их proof обрабатывает
-    // RepaymentBridge), так что здесь все action'ы — скоринговые.
+    // The freshness window (minAcceptedHeight) applies to scoring actions.
+    // Path B repayments never arrive via execute at all (their proofs are handled
+    // by RepaymentBridge), so all actions here are scoring actions.
     function _isFreshnessEnforced(uint8 action) internal pure override returns (bool) {
         return action == uint8(ScoreActions.ScoreDeposit) || action == uint8(ScoreActions.ScoreRepayment);
     }
@@ -193,7 +197,7 @@ contract CreditCore is TruthGateBase {
         internal
         override
     {
-        // sourceHeight не используется: дедлайны скоринга ограничивает окно свежести
+        // sourceHeight is unused: scoring deadlines are bounded by the freshness window
         if (action == uint8(ScoreActions.ScoreDeposit)) {
             _scoreDeposits(queryId, encodedTransaction);
         } else if (action == uint8(ScoreActions.ScoreRepayment)) {
@@ -204,8 +208,8 @@ contract CreditCore is TruthGateBase {
     }
 
     function _scoreDeposits(bytes32 queryId, bytes memory encodedTransaction) internal {
-        // _validateAndExtractLogs: тип транзакции, receiptStatus == 1 (инвариант №1),
-        // фильтр по сигнатуре, каждый лог обязан быть от vaultOnSepolia
+        // _validateAndExtractLogs: transaction type, receiptStatus == 1 (invariant #1
+        // (CLAUDE.md)), signature filter, every log must come from vaultOnSepolia
         EvmV1Decoder.LogEntry[] memory logs =
             _validateAndExtractLogs(encodedTransaction, DEPOSIT_EVENT_SIGNATURE, vaultOnSepolia);
 
@@ -214,13 +218,13 @@ contract CreditCore is TruthGateBase {
             require(logs[i].data.length == 64, "Invalid FundsDeposited data");
 
             address depositor = address(uint160(uint256(logs[i].topics[1])));
-            // nonce — уникальность события на стороне vault'а; replay-защиту здесь
-            // даёт queryId (инвариант №3), nonce не используем
+            // nonce — event uniqueness on the vault side; replay protection here
+            // comes from queryId (invariant #3 (CLAUDE.md)), the nonce is unused
             (uint256 amount, ) = abi.decode(logs[i].data, (uint256, uint256));
 
-            // Вклад депозитов в скор капится: защита от накрутки циркуляцией одних
-            // и тех же средств. Сверх кэпа — delta 0, но событие эмитится (депозит
-            // верифицирован и виден в истории).
+            // Deposit contribution to the score is capped: protection against score
+            // farming by circulating the same funds. Above the cap — delta 0, but the
+            // event is still emitted (the deposit is verified and visible in history).
             uint256 used = depositScoreOf[depositor];
             uint256 delta = 0;
             if (used < DEPOSIT_SCORE_CAP) {
@@ -244,14 +248,14 @@ contract CreditCore is TruthGateBase {
             address ethBorrower = address(uint160(uint256(logs[i].topics[1])));
             (, uint256 amount) = abi.decode(logs[i].data, (uint256, uint256));
 
-            // Объём + плоский бонус за сам акт погашения: дисциплина ценится и частотой
+            // Volume + a flat bonus for the repayment act itself: discipline is valued by frequency too
             uint256 delta = amount + FLAT_REPAYMENT_BONUS;
             borrowers[ethBorrower].ethScore += delta;
             emit EthScoreIncreased(ethBorrower, delta, queryId);
         }
     }
 
-    // ---------- Кредитный лимит ----------
+    // ---------- Credit limit ----------
 
     function creditLimit(address borrowerAddr) public view returns (uint256) {
         Borrower storage b = borrowers[borrowerAddr];
@@ -260,11 +264,11 @@ contract CreditCore is TruthGateBase {
         uint256 base = BASE_LIMIT + ((b.ethScore - MIN_ETH_SCORE) * SCORE_SLOPE_NUM) / SCORE_SLOPE_DEN;
         if (base > MAX_BASE_LIMIT) base = MAX_BASE_LIMIT;
 
-        // localScore хранится в 1e18-единицах → нормируем обратно к «штукам»
+        // localScore is stored in 1e18 units → normalize back to whole units
         return base + (b.localScore * LOCAL_SCORE_K) / 1 ether;
     }
 
-    // ---------- Займы ----------
+    // ---------- Loans ----------
 
     function borrow(uint256 amount) external returns (uint256 loanId) {
         require(amount > 0, "zero amount");
@@ -275,7 +279,7 @@ contract CreditCore is TruthGateBase {
 
         require(b.openDebt + totalDue <= creditLimit(msg.sender), "over credit limit");
 
-        // Отсутствие просрочки: ни один открытый займ не должен быть за дедлайном
+        // No overdue loans: no open loan may be past its deadline
         uint256[] storage open = _openLoans[msg.sender];
         require(open.length < MAX_OPEN_LOANS, "too many open loans");
         for (uint256 i; i < open.length; i++) {
@@ -285,9 +289,9 @@ contract CreditCore is TruthGateBase {
         loanId = nextLoanId;
         nextLoanId += 1;
 
-        // Стейт-машина USCLoanManager: Created → Funded. Здесь регистрация и
-        // фондирование происходят в одной транзакции, поэтому Created — транзитное
-        // состояние и займ сразу записывается как Funded.
+        // USCLoanManager state machine: Created → Funded. Here registration and
+        // funding happen in one transaction, so Created is a transient state and
+        // the loan is recorded as Funded immediately.
         loans[loanId] = Loan({
             borrower: msg.sender,
             principal: amount,
@@ -309,12 +313,12 @@ contract CreditCore is TruthGateBase {
         return loanId;
     }
 
-    /// @notice ВАЛОВАЯ сумма к погашению с учётом штрафа за просрочку:
-    /// principal + interestDue (+штраф). repaidAmount НЕ вычитается — это полная
-    /// цена займа, а не остаток; уже погашенный займ вернёт то же значение.
-    /// Остаток к оплате — outstandingDueFor.
-    /// После дедлайна (или в статусе Expired) процентная часть дорожает на
-    /// LATE_PENALTY_BPS; займ остаётся погашаемым — это путь реабилитации.
+    /// @notice GROSS amount due including the overdue penalty:
+    /// principal + interestDue (+penalty). repaidAmount is NOT subtracted — this is
+    /// the full price of the loan, not the remainder; a fully repaid loan returns the
+    /// same value. The remaining amount payable is outstandingDueFor.
+    /// After the deadline (or in Expired status) the interest part grows by
+    /// LATE_PENALTY_BPS; the loan remains repayable — that is the rehabilitation path.
     function totalDueFor(uint256 loanId) public view returns (uint256) {
         Loan storage loan = loans[loanId];
         uint256 baseDue = loan.principal + loan.interestDue;
@@ -324,8 +328,8 @@ contract CreditCore is TruthGateBase {
         return baseDue;
     }
 
-    /// @notice НЕТТО-остаток к погашению: totalDueFor минус уже выплаченное.
-    /// «Сколько ещё платить» для дашбордов и демо; у погашенного займа — 0.
+    /// @notice NET remainder due: totalDueFor minus what has already been paid.
+    /// "How much is left to pay" for dashboards and the demo; 0 for a repaid loan.
     function outstandingDueFor(uint256 loanId) external view returns (uint256) {
         uint256 due = totalDueFor(loanId);
         uint256 repaid = loans[loanId].repaidAmount;
@@ -336,12 +340,12 @@ contract CreditCore is TruthGateBase {
         return loan.status == LoanStatus.Expired || block.number > loan.deadlineBlock;
     }
 
-    /// @notice Путь А: погашение нативным CTC. Тело гасится первым, затем процент
-    /// (и штраф); вся сумма уходит в LPPool.absorb (процентная часть частично
-    /// сжигается там). Платить может кто угодно (msg.sender не обязан быть заёмщиком).
-    /// Просроченный займ (Expired или за дедлайном) погашается со штрафом
-    /// LATE_PENALTY_BPS к процентной части; полное погашение переводит его в Repaid
-    /// и разблокирует borrow, но localScore/loansCompleted не начисляются.
+    /// @notice Path A: repayment in native CTC. Principal is repaid first, then
+    /// interest (and penalty); the whole amount goes to LPPool.absorb (part of the
+    /// interest is burned there). Anyone may pay (msg.sender need not be the borrower).
+    /// An overdue loan (Expired or past the deadline) is repaid with the
+    /// LATE_PENALTY_BPS penalty on the interest part; full repayment moves it to
+    /// Repaid and unblocks borrow, but localScore/loansCompleted are not accrued.
     function repayInCTC(uint256 loanId) external payable {
         require(msg.value > 0, "zero payment");
 
@@ -356,8 +360,8 @@ contract CreditCore is TruthGateBase {
         uint256 totalDue = totalDueFor(loanId);
         require(msg.value <= totalDue - loan.repaidAmount, "overpayment");
 
-        // Разбиение тело/процент: путь А гасит тело первым (по треку principalRepaid,
-        // т.к. путь Б мог уже погасить часть процентов)
+        // Principal/interest split: path A repays principal first (tracked by
+        // principalRepaid, since path B may have already repaid part of the interest)
         uint256 principalOutstanding = loan.principal - loan.principalRepaid;
         uint256 principalPart = msg.value > principalOutstanding ? principalOutstanding : msg.value;
         loan.principalRepaid += principalPart;
@@ -367,15 +371,16 @@ contract CreditCore is TruthGateBase {
         POOL.absorb{value: msg.value}(principalPart);
     }
 
-    /// @notice Путь Б: учёт погашения, доказанного RepaymentBridge (wUSDC уже в его
-    /// казне). CTC не движется: сеттлмент с пулом — зона ответственности моста.
-    /// Дедлайн здесь не проверяется — мост сверяет его с source-height proof'а.
-    /// Лимит доли пути Б (~30%) тоже проверяет мост; здесь только учёт usdcRepaidShare.
-    /// Разбиение — ПРОЦЕНТ ПЕРВЫМ (зеркально пути А): бридж-валюта покрывает
-    /// профитную часть долга, чтобы дисконт SwapDesk гасился из процентной маржи,
-    /// а тело оставалось обеспеченным твёрдым CTC.
-    /// @return principalPart Часть amount, отнесённая на тело (мост ведёт по ней казну).
-    /// @return interestPart Часть amount, отнесённая на процент.
+    /// @notice Path B: accounting for a repayment proven by RepaymentBridge (the wUSDC
+    /// is already in its treasury). No CTC moves: settlement with the pool is the
+    /// bridge's responsibility. The deadline is not checked here — the bridge checks it
+    /// against the proof's delivery time. The path B share cap (~30%) is also enforced
+    /// by the bridge; here only usdcRepaidShare accounting.
+    /// The split is INTEREST-FIRST (mirroring path A): the bridged currency covers the
+    /// profit part of the debt so the SwapDesk discount is paid out of the interest
+    /// margin while the principal stays backed by hard CTC.
+    /// @return principalPart Part of amount attributed to principal (the bridge tracks its treasury by it).
+    /// @return interestPart Part of amount attributed to interest.
     function creditRepaymentFromBridge(uint256 loanId, uint256 amount)
         external
         onlyRepaymentBridge
@@ -386,14 +391,14 @@ contract CreditCore is TruthGateBase {
         Loan storage loan = loans[loanId];
         require(loan.status == LoanStatus.Funded || loan.status == LoanStatus.PartlyRepaid, "invalid loan status");
 
-        // Путь Б всегда без штрафа: своевременность проверил мост — дедлайн займа
-        // на момент доставки proof'а + буфер, обе стороны в CC3-шкале
+        // Path B is always penalty-free: timeliness was checked by the bridge — the
+        // loan deadline at proof delivery time + buffer, both sides on the CC3 scale
         uint256 totalDue = loan.principal + loan.interestDue;
         require(amount <= totalDue - loan.repaidAmount, "overpayment");
 
         loan.usdcRepaidShare += amount;
 
-        // Процент первым; клампы защищают от учёта штрафных выплат как процента
+        // Interest first; the clamps prevent penalty payments from being counted as interest
         uint256 interestRepaid = loan.repaidAmount - loan.principalRepaid;
         uint256 interestOutstanding =
             loan.interestDue > interestRepaid ? loan.interestDue - interestRepaid : 0;
@@ -406,9 +411,9 @@ contract CreditCore is TruthGateBase {
         return (principalPart, interestPart);
     }
 
-    /// @dev Общий учёт погашения для обоих путей: repaidAmount, openDebt, статус,
-    /// localScore при полном погашении. При late-погашении (реабилитация) статус
-    /// становится Repaid, но localScore/loansCompleted не растут.
+    /// @dev Shared repayment accounting for both paths: repaidAmount, openDebt, status,
+    /// localScore on full repayment. On a late repayment (rehabilitation) the status
+    /// becomes Repaid, but localScore/loansCompleted do not grow.
     function _applyRepayment(
         uint256 loanId,
         Loan storage loan,
@@ -422,8 +427,8 @@ contract CreditCore is TruthGateBase {
 
         Borrower storage b = borrowers[loan.borrower];
 
-        // openDebt учитывает только базовый долг (тело + процент), в него штраф не
-        // входил — уменьшаем только на базовую часть платежа
+        // openDebt tracks only the base debt (principal + interest); the penalty was
+        // never included in it — decrease it only by the base portion of the payment
         uint256 baseDue = loan.principal + loan.interestDue;
         uint256 baseOutstanding = repaidBefore >= baseDue ? 0 : baseDue - repaidBefore;
         uint256 basePortion = amount > baseOutstanding ? baseOutstanding : amount;
@@ -438,8 +443,8 @@ contract CreditCore is TruthGateBase {
             _removeOpenLoan(loan.borrower, loanId);
             emit LoanRepaid(loanId);
         } else {
-            // Expired остаётся Expired до полного погашения — займ по-прежнему
-            // блокирует borrow и гасится по штрафной ставке
+            // Expired stays Expired until full repayment — the loan still blocks
+            // borrow and is repaid at the penalty rate
             if (loan.status != LoanStatus.Expired) {
                 loan.status = LoanStatus.PartlyRepaid;
             }
@@ -447,18 +452,19 @@ contract CreditCore is TruthGateBase {
         }
     }
 
-    /// @dev Прирост localScore за полностью погашенный (не просроченный) займ —
-    /// пропорционален принятому пулом риску, а не факту погашения:
+    /// @dev localScore gain for a fully repaid (non-overdue) loan — proportional to
+    /// the risk the pool took, not to the mere fact of repayment:
     ///   delta = principal × min(heldBlocks, LOAN_DURATION_BLOCKS)
-    ///           / LOAN_DURATION_BLOCKS / LOCAL_SCORE_NORM_PRINCIPAL   (в 1e18-единицах)
-    /// heldBlocks — блоки CC3 от выдачи до закрывающего платежа; для пути Б это
-    /// момент доставки proof'а (creditRepaymentFromBridge), тоже CC3-шкала.
-    /// Момент выдачи не хранится отдельно: deadlineBlock − LOAN_DURATION_BLOCKS.
-    /// Защита от накрутки мгновенными циклами «занял—вернул»: короче
-    /// MIN_HOLD_BLOCKS — ноль; выше порога награда всё равно пропорциональна
-    /// amount × time, т.е. лимит нельзя купить дешевле уплаченного процента.
-    /// min()-кламп нужен пути Б: доставка в пределах DELIVERY_BUFFER_BLOCKS может
-    /// прийти чуть позже дедлайна — считается полным сроком, не больше.
+    ///           / LOAN_DURATION_BLOCKS / LOCAL_SCORE_NORM_PRINCIPAL   (in 1e18 units)
+    /// heldBlocks — CC3 blocks from issuance to the closing payment; for path B that
+    /// is the proof delivery moment (creditRepaymentFromBridge), also on the CC3 scale.
+    /// The issuance moment is not stored separately: deadlineBlock − LOAN_DURATION_BLOCKS.
+    /// Protection against score farming via instant "borrow—repay" cycles: shorter
+    /// than MIN_HOLD_BLOCKS — zero; above the threshold the reward is still
+    /// proportional to amount × time, i.e. the credit limit cannot be bought cheaper
+    /// than the interest paid.
+    /// The min() clamp is needed for path B: delivery within DELIVERY_BUFFER_BLOCKS
+    /// may arrive slightly after the deadline — counted as the full term, no more.
     function _localScoreDelta(Loan storage loan) internal view returns (uint256) {
         uint256 held = block.number - (loan.deadlineBlock - LOAN_DURATION_BLOCKS);
         if (held < MIN_HOLD_BLOCKS) return 0;

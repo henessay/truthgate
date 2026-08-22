@@ -1,52 +1,52 @@
-# TruthGate × Attestcoin/USC: интеграционная сводка
+# TruthGate × Attestcoin/USC: Integration Summary
 
-Как TruthGate потребляет доказанные Sepolia-события через протокол USC (Attestcoin) на Creditcoin CC3 Testnet.
+How TruthGate consumes proven Sepolia events via the USC (Attestcoin) protocol on Creditcoin CC3 Testnet.
 
-## Механика
+## Mechanics
 
-- Верификация — precompile `0x…0FD2` (chainKey Sepolia = 1): `verifyAndEmit(chainKey, height, encodedTx, MerkleProof, ContinuityProof)`. Precompile доказывает только включение транзакции в финализированный блок; успешность (`RxStatus == 1`) проверяем сами через `EvmV1Decoder.decodeReceiptFields`.
-- Приём proof'ов — `TruthGateBase.execute`: пиновка chainKey == 1 → окно свежести (для скоринга) → anti-replay по `queryId = keccak256(chainKey ‖ height ‖ txIndex)` → verify → декодирование логов с обязательной проверкой адреса-эмитента (`_validateAndExtractLogs`).
+- Verification — precompile `0x…0FD2` (chainKey Sepolia = 1): `verifyAndEmit(chainKey, height, encodedTx, MerkleProof, ContinuityProof)`. The precompile only proves the transaction's inclusion in a finalized block; success (`RxStatus == 1`) is checked by us via `EvmV1Decoder.decodeReceiptFields`.
+- Proof intake — `TruthGateBase.execute`: pin chainKey == 1 → freshness window (for scoring) → anti-replay by `queryId = keccak256(chainKey ‖ height ‖ txIndex)` → verify → log decoding with a mandatory emitter-address check (`_validateAndExtractLogs`).
 
-## Потребляемые события Sepolia
+## Consumed Sepolia events
 
-| Событие | Источник (owner-регистрируемый) | Потребитель | Эффект |
+| Event | Source (owner-registered) | Consumer | Effect |
 |---|---|---|---|
-| `FundsDeposited(address indexed depositor, uint256 amount, uint256 nonce)` | vaultOnSepolia | CreditCore (action ScoreDeposit) | ethScore += amount, суммарно капится DEPOSIT_SCORE_CAP |
+| `FundsDeposited(address indexed depositor, uint256 amount, uint256 nonce)` | vaultOnSepolia | CreditCore (action ScoreDeposit) | ethScore += amount, cumulatively capped at DEPOSIT_SCORE_CAP |
 | `LoanRepaidOnEth(address indexed borrower, uint256 loanId, uint256 amount)` | loanBookOnSepolia | CreditCore (action ScoreRepayment) | ethScore += amount + FLAT_REPAYMENT_BONUS |
-| `UsdcLockedForRepayment(address indexed borrower, uint256 ccLoanId, uint256 amount)` | repaymentVaultOnSepolia | RepaymentBridge (action UsdcRepayment) | mint wUSDC в казну моста + учёт погашения в CreditCore (≤30% долга, дедлайн — CC3-`block.number` на момент доставки proof'а + DELIVERY_BUFFER_BLOCKS) |
+| `UsdcLockedForRepayment(address indexed borrower, uint256 ccLoanId, uint256 amount)` | repaymentVaultOnSepolia | RepaymentBridge (action UsdcRepayment) | mint wUSDC to the bridge treasury + repayment accounting in CreditCore (≤30% of the debt, deadline — CC3 `block.number` at proof delivery time + DELIVERY_BUFFER_BLOCKS) |
 
-## Скоринговая модель и защита от накрутки
+## Scoring model and score-farming protection
 
-Кредитный лимит: `limit = BASE_LIMIT + slope×(ethScore − MIN_ETH_SCORE) + K×localScore` (base капится MAX_BASE_LIMIT). Два независимых скора, у каждого свой источник правды и своя защита от накрутки — ответ на вопрос «что мешает купить лимит дёшево»:
+Credit limit: `limit = BASE_LIMIT + slope×(ethScore − MIN_ETH_SCORE) + K×localScore` (base capped at MAX_BASE_LIMIT). Two independent scores, each with its own source of truth and its own score-farming protection — the answer to "what stops someone from buying the limit cheaply":
 
-**ethScore (репутация с Ethereum)** растёт только из доказанных Attestcoin'ом Sepolia-событий:
+**ethScore (reputation from Ethereum)** grows only from Attestcoin-proven Sepolia events:
 
-- *Депозиты* (`FundsDeposited`) — слабый сигнал: одни и те же средства можно гонять по кругу депозит→вывод→депозит. Поэтому суммарный вклад депозитов капится `DEPOSIT_SCORE_CAP` (2 ETH) на адрес; сверх кэпа депозит верифицируется, но скор не растит.
-- *Погашения на Ethereum* (`LoanRepaidOnEth`) — основной вес: `+amount + FLAT_REPAYMENT_BONUS`. Накрутка требует реально гасить займы в чужой системе, т.е. платить её проценты.
-- Реплей одного события отсекается anti-replay по `queryId`; подделка источника — проверкой адреса-эмитента лога; проталкивание старых событий — окном свежести `minAcceptedHeight`.
+- *Deposits* (`FundsDeposited`) — a weak signal: the same funds can be cycled deposit→withdraw→deposit. Therefore the cumulative deposit contribution is capped at `DEPOSIT_SCORE_CAP` (2 ETH) per address; beyond the cap a deposit still verifies, but the score does not grow.
+- *Repayments on Ethereum* (`LoanRepaidOnEth`) — the main weight: `+amount + FLAT_REPAYMENT_BONUS`. Farming this requires actually repaying loans in an external system, i.e. paying its interest.
+- Replay of a single event is cut off by anti-replay on `queryId`; source forgery — by the log emitter-address check; pushing stale events — by the `minAcceptedHeight` freshness window.
 
-**localScore (репутация на CC3)** растёт за погашенные займы CreditCore — пропорционально принятому пулом риску, а не факту погашения:
+**localScore (reputation on CC3)** grows for repaid CreditCore loans — proportionally to the risk the pool actually took on, not to the mere fact of repayment:
 
 ```
 localScoreDelta = principal × min(heldBlocks, LOAN_DURATION_BLOCKS) / LOAN_DURATION_BLOCKS
                   / LOCAL_SCORE_NORM_PRINCIPAL
 ```
 
-- `heldBlocks` — блоки CC3 от выдачи до закрывающего платежа (для пути Б — блок доставки proof'а мостом; шкала та же).
-- Нормировка `LOCAL_SCORE_NORM_PRINCIPAL = 4.5 CTC`: займ демо-масштаба (4–5 CTC) на полный срок даёт ~1 единицу (= +1 CTC к лимиту) — масштаб лимитов прежней модели сохранён.
-- `MIN_HOLD_BLOCKS = LOAN_DURATION_BLOCKS/4`: погашение раньше порога проходит штатно (тело + процент), но скор не начисляет.
-- **Временны́е параметры — конструкторные (immutable), и на демо-деплое они сжаты — говорим об этом прямо.** Продовые значения зашиты дефолтом конструктора: срок займа 100 000 блоков CC3 (~17 суток), порог удержания 25 000 (~4.3 суток). Демо-деплой использует срок ~240 блоков (~1 час) и порог ~60 (~15 минут) — иначе флайвил «репутация → больше кредита» невозможно показать вживую. Формула и нормировка при этом не меняются: награда зависит от **доли** срока удержания, поэтому при пропорциональном сжатии экономика сохраняется (закреплено тестом `test_scoreScaleInvariantUnderCompressedSchedule` — одинаковая доля удержания даёт одинаковый скор на демо- и прод-параметрах). Это сжатие масштаба времени для наблюдаемости, а не замедленная или подделанная модель.
-- Просроченные займы (`Expired` / за дедлайном) скор не начисляют и раньше — поздняя «реабилитация» закрывает займ со штрафом, но репутацию не растит.
+- `heldBlocks` — CC3 blocks from issuance to the closing payment (for path B — the block of proof delivery by the bridge; same scale).
+- Normalization `LOCAL_SCORE_NORM_PRINCIPAL = 4.5 CTC`: a demo-scale loan (4–5 CTC) held for the full term yields ~1 unit (= +1 CTC to the limit) — the limit scale of the previous model is preserved.
+- `MIN_HOLD_BLOCKS = LOAN_DURATION_BLOCKS/4`: repayment before the threshold goes through normally (principal + interest), but accrues no score.
+- **The time parameters are constructor-set (immutable), and on the demo deploy they are compressed — we state this openly.** Production values are hardcoded as the constructor defaults: loan term 100,000 CC3 blocks (~17 days), hold threshold 25,000 (~4.3 days). The demo deploy uses a term of ~240 blocks (~1 hour) and a threshold of ~60 (~15 minutes) — otherwise the "reputation → more credit" flywheel cannot be shown live. The formula and normalization do not change: the reward depends on the **fraction** of the term held, so under proportional compression the economics are preserved (locked in by the test `test_scoreScaleInvariantUnderCompressedSchedule` — an identical hold fraction yields an identical score on demo and production parameters). This is a compression of the time scale for observability, not a slowed-down or faked model.
+- Overdue loans (`Expired` / past deadline) accrued no score before either — late "rehabilitation" closes the loan with a penalty, but does not grow reputation.
 
-Почему атака «цикл занял—вернул» больше не работает: раньше любое полное погашение давало фиксированный `+1` (= +1 CTC лимита), и цикл минимальных займов покупал лимит примерно за 0.005% его величины (только проценты по микрозайму). Теперь мгновенный цикл даёт ровно 0 (и по порогу удержания, и по пропорции `heldBlocks = 0`), а выше порога награда пропорциональна `principal × time` — чтобы получить +1 CTC лимита, надо продержать ~4.5 CTC полный срок и заплатить ~0.225 CTC процентов (5%), т.е. лимит стоит ≥ ~22.5% своей величины уплаченным процентом, независимо от дробления на займы. Единственный способ «накрутить» localScore — реально пользоваться кредитом и платить за него, что и есть измеряемое поведение.
+Why the "borrow-and-repay cycle" attack no longer works: previously any full repayment gave a fixed `+1` (= +1 CTC of limit), and a cycle of minimal loans bought the limit for roughly 0.005% of its value (only the interest on a micro-loan). Now an instant cycle yields exactly 0 (both by the hold threshold and by the proportion `heldBlocks = 0`), and above the threshold the reward is proportional to `principal × time` — to gain +1 CTC of limit you must hold ~4.5 CTC for the full term and pay ~0.225 CTC of interest (5%), i.e. the limit costs ≥ ~22.5% of its value in paid interest, regardless of how it is split across loans. The only way to "farm" localScore is to actually use credit and pay for it — which is exactly the behavior being measured.
 
-## Ограничения v1
+## v1 limitations
 
-- **Identity-модель: один EOA на обоих чейнах.** Sepolia-адрес участника обязан совпадать с его CC3-адресом — заёмщик идентифицируется адресом из indexed-топика доказанного события. Смарт-контракт-волеты и разные адреса на разных чейнах не поддерживаются; несовпадение borrower'а события с заёмщиком займа мост отклоняет (`borrower mismatch`).
-- Дедлайны займов — в блоках CC3; путь Б проверяет их против CC3-`block.number` на момент доставки proof'а (+буфер). Sepolia-высоты в проверке дедлайнов не участвуют — шкалы несравнимы.
-- Курс wUSDC/CTC константный 1:1 (в проде — оракул).
+- **Identity model: a single EOA on both chains.** A participant's Sepolia address must match their CC3 address — the borrower is identified by the address from the indexed topic of the proven event. Smart-contract wallets and different addresses on different chains are not supported; if the event's borrower does not match the loan's borrower, the bridge rejects it (`borrower mismatch`).
+- Loan deadlines are in CC3 blocks; path B checks them against the CC3 `block.number` at proof delivery time (+buffer). Sepolia heights take no part in deadline checks — the scales are incomparable.
+- The wUSDC/CTC rate is a constant 1:1 (in production — an oracle).
 
-## Роли off-chain
+## Off-chain roles
 
-- Worker (`@gluwa/usc-sdk`): строит proof'ы (`ProofBuilder` → prover API), может предварительно проверять их бесплатно (`verifySingle`/`verifyBatch` через eth_call) и сабмитит в `execute`.
-- AI-агент не подписывает денежные транзакции — только решения submit/defer/escalate по proof'ам (инвариант №2 CLAUDE.md).
+- Worker (`@gluwa/usc-sdk`): builds proofs (`ProofBuilder` → prover API), can pre-check them for free (`verifySingle`/`verifyBatch` via eth_call), and submits them to `execute`.
+- The AI agent never signs money transactions — only submit/defer/escalate decisions on proofs (invariant #2 of CLAUDE.md).

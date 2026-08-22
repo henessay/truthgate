@@ -1,7 +1,7 @@
 /**
- * Клиент API worker'а (worker run --serve, план: http://127.0.0.1:8787).
- * Graceful degradation: worker offline → null, НИКОГДА не бросает —
- * все экраны обязаны работать без worker'а.
+ * Worker API client (worker run --serve, planned: http://127.0.0.1:8787).
+ * Graceful degradation: worker offline → null, NEVER throws —
+ * every screen must keep working without the worker.
  */
 
 const BASE =
@@ -39,7 +39,7 @@ async function get<T>(path: string): Promise<T | null> {
     if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {
-    return null; // worker offline — это штатное состояние UI
+    return null; // worker offline is a normal UI state
   }
 }
 

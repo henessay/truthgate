@@ -6,26 +6,26 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /// @title RepaymentVault
-/// @notice Sepolia-приёмник USDC для пути Б погашения займов TruthGate: заёмщик
-/// запирает USDC, worker доказывает событие в RepaymentBridge на CC3.
-/// ЧЕСТНОЕ v1-ограничение: накопленные USDC заперты здесь НАВСЕГДА — обратной
-/// Writability (CC3 → Sepolia) в v1 нет, вывести их некому и нечем. Экономика
-/// закрывается на CC3-стороне (wUSDC + SwapDesk), а не возвратом этих USDC.
-/// ВАЖНО: сигнатура события обязана побайтово совпадать с
-/// RepaymentBridge.LOCK_EVENT_SIGNATURE (см. test/EventParity.t.sol).
+/// @notice Sepolia USDC receiver for TruthGate's repayment path B: the borrower
+/// locks USDC, the worker proves the event into RepaymentBridge on CC3.
+/// HONEST v1 limitation: the accumulated USDC is locked here FOREVER — there is no
+/// reverse writability (CC3 → Sepolia) in v1; nobody and nothing can withdraw it.
+/// The economics closes on the CC3 side (wUSDC + SwapDesk), not by returning this USDC.
+/// IMPORTANT: the event signature must match RepaymentBridge.LOCK_EVENT_SIGNATURE
+/// byte-for-byte (see test/EventParity.t.sol).
 contract RepaymentVault is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    /// @notice Тестовый USDC (6 decimals) — суммы события в нативных единицах USDC;
-    /// нормализацию к 18 decimals делает RepaymentBridge на CC3.
+    /// @notice Test USDC (6 decimals) — event amounts are in native USDC units;
+    /// normalization to 18 decimals is done by RepaymentBridge on CC3.
     IERC20 public immutable USDC;
 
     uint256 public totalLocked;
 
     /// @dev keccak256("UsdcLockedForRepayment(address,uint256,uint256)") ==
-    /// RepaymentBridge.LOCK_EVENT_SIGNATURE. Мост ожидает: topics.length == 2
-    /// (только borrower indexed), data == abi.encode(ccLoanId, amount) (64 байта);
-    /// borrower обязан совпадать с заёмщиком займа на CC3 (identity v1: один EOA).
+    /// RepaymentBridge.LOCK_EVENT_SIGNATURE. The bridge expects: topics.length == 2
+    /// (only borrower indexed), data == abi.encode(ccLoanId, amount) (64 bytes);
+    /// borrower must match the loan's borrower on CC3 (identity v1: a single EOA).
     event UsdcLockedForRepayment(address indexed borrower, uint256 ccLoanId, uint256 amount);
 
     constructor(address usdc_) {

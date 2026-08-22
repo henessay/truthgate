@@ -5,29 +5,29 @@ export type EventSource = 'ScoringVault' | 'LoanBookSim' | 'RepaymentVault';
 export type TargetContract = 'CreditCore' | 'RepaymentBridge';
 
 export interface PendingEvent {
-  /** Ключ дедупа: `${txHash}:${logIndex}` */
+  /** Dedup key: `${txHash}:${logIndex}` */
   key: string;
   txHash: string;
   logIndex: number;
   blockNumber: number;
   source: EventSource;
   eventName: string;
-  /** Аргументы события (для логов/failed.json), значения — строки */
+  /** Event arguments (for logs/failed.json), values as strings */
   args: Record<string, string>;
   target: TargetContract;
   action: number;
   attempts: number;
   firstSeenAt: string;
-  /** Не раньше этого времени брать в работу (backoff/ожидание аттестации) */
+  /** Do not pick up before this time (backoff / waiting for attestation) */
   notBeforeMs: number;
   lastError?: string;
 }
 
 export interface WorkerState {
-  /** Курсор Sepolia: последний ПОЛНОСТЬЮ обработанный watcher'ом блок */
+  /** Sepolia cursor: the last block FULLY processed by the watcher */
   lastProcessedBlock: number;
   queue: PendingEvent[];
-  /** Недавно завершённые ключи — дедуп при перекрытии диапазонов getLogs */
+  /** Recently completed keys — dedup across overlapping getLogs ranges */
   processedKeys: string[];
 }
 
@@ -42,7 +42,7 @@ const MAX_PROCESSED_KEYS = 2000;
 function atomicWrite(path: string, data: unknown): void {
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, JSON.stringify(data, null, 2));
-  renameSync(tmp, path); // атомарно: state переживает падение посреди записи
+  renameSync(tmp, path); // atomic: state survives a crash mid-write
 }
 
 export function loadState(): WorkerState {
@@ -52,11 +52,12 @@ export function loadState(): WorkerState {
   return JSON.parse(readFileSync(CONFIG.stateFile, 'utf8')) as WorkerState;
 }
 
-// ---------- межпроцессная дисциплина записи ----------
-// state.json пишут несколько акторов: живой `run`, короткие команды (replay,
-// set-cursor) и руки оператора. Писать снапшот памяти целиком нельзя — умирающий
-// процесс затирает чужие изменения. Поэтому: каждая запись идёт под lock-файлом
-// и мёржится со СВЕЖИМ содержимым файла, а не заменяет его.
+// ---------- cross-process write discipline ----------
+// state.json is written by several actors: the live `run`, short-lived commands
+// (replay, set-cursor) and the operator's hands. Writing a full memory snapshot
+// is forbidden — a dying process would clobber others' changes. Therefore every
+// write happens under a lock file and is merged with the FRESH file contents
+// instead of replacing them.
 
 const LOCK_STALE_MS = 10_000;
 const LOCK_TIMEOUT_MS = 5_000;
@@ -74,17 +75,17 @@ export function withStateLock<T>(fn: () => T): T {
       writeFileSync(lockFile, String(process.pid), { flag: 'wx' });
       break;
     } catch {
-      // Lock занят. Протухший (упавший процесс) снимаем, живой — ждём.
+      // Lock is held. Remove a stale one (crashed process); wait on a live one.
       try {
         if (Date.now() - statSync(lockFile).mtimeMs > LOCK_STALE_MS) {
           rmSync(lockFile, { force: true });
           continue;
         }
       } catch {
-        continue; // lock исчез между проверками — новая попытка захвата
+        continue; // lock vanished between checks — retry acquisition
       }
       if (Date.now() > deadline) throw new Error(`state lock busy: ${lockFile}`);
-      sleepSync(LOCK_RETRY_MS); // state-операции — миллисекунды, ждать недолго
+      sleepSync(LOCK_RETRY_MS); // state operations take milliseconds — the wait is short
     }
   }
   try {
@@ -101,9 +102,9 @@ function capProcessedKeys(state: WorkerState): void {
 }
 
 /**
- * Эксклюзивное read-modify-write для короткоживущих команд (replay, set-cursor):
- * под lock'ом читается СВЕЖИЙ файл, мутируется и синхронно пишется на диск до
- * возврата — результат виден в state.json сразу после команды.
+ * Exclusive read-modify-write for short-lived commands (replay, set-cursor):
+ * under the lock, the FRESH file is read, mutated, and synchronously written to
+ * disk before returning — the result is visible in state.json right after the command.
  */
 export function updateState(mutate: (s: WorkerState) => void): WorkerState {
   return withStateLock(() => {
@@ -116,12 +117,12 @@ export function updateState(mutate: (s: WorkerState) => void): WorkerState {
 }
 
 /**
- * Трёхсторонний мёрж для долгоживущего `run`: base — что процесс видел на диске
- * при прошлой синхронизации, mem — его текущая память, disk — свежий файл.
- * Внешние изменения (disk≠base) приоритетнее собственных:
- *  - курсор, сдвинутый снаружи (set-cursor/руки), не откатывается;
- *  - событие, добавленное в очередь снаружи (replay), не теряется;
- *  - ключ, снаружи вычищенный из processedKeys (replay), не воскресает.
+ * Three-way merge for the long-lived `run`: base — what the process saw on disk
+ * at the last sync, mem — its current memory, disk — the fresh file.
+ * External changes (disk≠base) take priority over the process's own:
+ *  - a cursor moved externally (set-cursor / by hand) is not rolled back;
+ *  - an event enqueued externally (replay) is not lost;
+ *  - a key externally removed from processedKeys (replay) is not resurrected.
  */
 export function mergeStates(base: WorkerState, mem: WorkerState, disk: WorkerState): WorkerState {
   const lastProcessedBlock =
@@ -146,9 +147,9 @@ export function mergeStates(base: WorkerState, mem: WorkerState, disk: WorkerSta
 }
 
 /**
- * Синхронизация памяти `run` с диском: мёрж под lock'ом, запись, и возврат
- * нового (state, base) — процесс продолжает работать с результатом мёржа,
- * т.е. подхватывает внешние изменения.
+ * Sync of the `run` process memory with disk: merge under the lock, write, and
+ * return the new (state, base) — the process continues with the merge result,
+ * i.e. it picks up external changes.
  */
 export function syncState(mem: WorkerState, base: WorkerState): { state: WorkerState; base: WorkerState } {
   return withStateLock(() => {

@@ -7,8 +7,8 @@ import {ScoringVault} from "../src/sepolia/ScoringVault.sol";
 import {LoanBookSim} from "../src/sepolia/LoanBookSim.sol";
 import {RepaymentVault} from "../src/sepolia/RepaymentVault.sol";
 
-/// @notice Деплой source-контрактов на Sepolia. Запускать ПЕРВЫМ (DeployCC3 читает
-/// адреса из docs/deployments.json):
+/// @notice Deploys the source contracts on Sepolia. Run FIRST (DeployCC3 reads the
+/// addresses from docs/deployments.json):
 ///   forge script script/DeploySepolia.s.sol --rpc-url sepolia --broadcast
 contract DeploySepolia is Script {
     function run() external {

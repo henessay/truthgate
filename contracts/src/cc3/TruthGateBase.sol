@@ -14,15 +14,15 @@ abstract contract TruthGateBase is Ownable {
     /// @dev Address: 0x0000000000000000000000000000000000000FD2 (4050 decimal)
     INativeQueryVerifier public immutable VERIFIER;
 
-    // TRUTHGATE: chainKey закреплён константой. USCBase принимает proof'ы с любого
-    // attested-чейна (chainKey приходит из calldata и не проверяется) — мы принимаем
-    // только Ethereum Sepolia, чей chainKey в сети Creditcoin равен 1.
+    // TRUTHGATE: chainKey is pinned as a constant. USCBase accepts proofs from any
+    // attested chain (chainKey comes from calldata and is not checked) — we accept
+    // only Ethereum Sepolia, whose chainKey in the Creditcoin network is 1.
     uint64 public constant EXPECTED_CHAIN_KEY = 1;
 
-    // TRUTHGATE: окно свежести (шкала SOURCE-чейна, т.е. Sepolia-высота — сверяется
-    // с blockHeight из proof'а). Proof'ы с blockHeight ниже этой отметки отклоняются
-    // для action'ов, у которых наследник оставил проверку включённой (см.
-    // _isFreshnessEnforced). По умолчанию 0 — проверка ничего не отсекает.
+    // TRUTHGATE: freshness window (SOURCE-chain scale, i.e. Sepolia height — checked
+    // against the proof's blockHeight). Proofs with blockHeight below this mark are
+    // rejected for actions where the subclass left the check enabled (see
+    // _isFreshnessEnforced). Default 0 — the check filters nothing.
     uint64 public minAcceptedHeight;
 
     mapping(bytes32 => bool) public processedQueries;
@@ -34,22 +34,24 @@ abstract contract TruthGateBase is Ownable {
         VERIFIER = NativeQueryVerifierLib.getVerifier();
     }
 
-    // TRUTHGATE: в отличие от USCBase, наследнику передаётся и sourceHeight — высота
-    // блока source-чейна (Sepolia-шкала) из proof'а. ВНИМАНИЕ: она несравнима с
-    // block.number CC3 — сверять с ней можно только другие source-высоты
-    // (как minAcceptedHeight); дедлайны в CC3-блоках сверяются с block.number.
+    // TRUTHGATE: unlike USCBase, the subclass also receives sourceHeight — the
+    // source-chain block height (Sepolia scale) from the proof. WARNING: it is
+    // incomparable with the CC3 block.number — it may only be compared against other
+    // source heights (like minAcceptedHeight); deadlines in CC3 blocks are checked
+    // against block.number.
     function _processAndEmitEvent(uint8 action, bytes32 queryId, uint64 sourceHeight, bytes memory encodedTransaction)
         internal
         virtual;
 
-    // TRUTHGATE: хук окна свежести — наследник решает, применять ли minAcceptedHeight
-    // к конкретному action. По умолчанию проверка включена для всех action'ов.
+    // TRUTHGATE: freshness-window hook — the subclass decides whether to apply
+    // minAcceptedHeight to a particular action. By default the check is enabled for
+    // all actions.
     function _isFreshnessEnforced(uint8 action) internal view virtual returns (bool) {
         action; // silence unused-parameter warning in the default implementation
         return true;
     }
 
-    // TRUTHGATE: owner-сеттер окна свежести.
+    // TRUTHGATE: owner setter for the freshness window.
     function setMinAcceptedHeight(uint64 newMinAcceptedHeight) external onlyOwner {
         minAcceptedHeight = newMinAcceptedHeight;
         emit MinAcceptedHeightUpdated(newMinAcceptedHeight);
@@ -65,12 +67,13 @@ abstract contract TruthGateBase is Ownable {
         bytes32 lowerEndpointDigest,
         bytes32[] calldata continuityRoots
     ) external returns (bool success) {
-        // TRUTHGATE: первая проверка — источник proof'а. До вычисления queryId и до
-        // verify: proof с чужого чейна отсекается ещё до вызовов precompile.
+        // TRUTHGATE: first check — the proof's source. Before computing the queryId
+        // and before verify: a proof from a foreign chain is rejected before any
+        // precompile calls.
         require(chainKey == EXPECTED_CHAIN_KEY, "wrong source chain");
 
-        // TRUTHGATE: окно свежести (если включено для этого action) — тоже до
-        // дорогостоящих вызовов precompile.
+        // TRUTHGATE: freshness window (if enabled for this action) — also before the
+        // expensive precompile calls.
         if (_isFreshnessEnforced(action)) {
             require(blockHeight >= minAcceptedHeight, "proof below min accepted height");
         }
@@ -134,11 +137,11 @@ abstract contract TruthGateBase is Ownable {
         }
     }
 
-    // TRUTHGATE: общий валидатор содержимого транзакции. Объединяет
-    // USCLoanManager._validateTransactionContents (тип транзакции, receiptStatus == 1,
-    // фильтр логов по сигнатуре) с обязательной проверкой адреса-эмитента для КАЖДОГО
-    // извлечённого лога — у Gluwa эта проверка была отдельным шагом и только для
-    // первого лога. Инвариант №1 проекта (RxStatus == 1) живёт здесь.
+    // TRUTHGATE: shared transaction-content validator. Combines
+    // USCLoanManager._validateTransactionContents (transaction type, receiptStatus == 1,
+    // log filtering by signature) with a mandatory emitter-address check for EVERY
+    // extracted log — in Gluwa's code that check was a separate step and applied only
+    // to the first log. Project invariant #1 (CLAUDE.md) (RxStatus == 1) lives here.
     function _validateAndExtractLogs(
         bytes memory encodedTransaction,
         bytes32 eventSignature,
@@ -158,9 +161,9 @@ abstract contract TruthGateBase is Ownable {
         selectedEventLogs = EvmV1Decoder.getLogsByEventSignature(receipt, eventSignature);
         require(selectedEventLogs.length > 0, "No events of required type found");
 
-        // TRUTHGATE: каждое извлекаемое событие обязано быть эмитировано ожидаемым
-        // контрактом-источником — иначе любой контракт на source-чейне мог бы
-        // подделать событие с нужной сигнатурой.
+        // TRUTHGATE: every extracted event must have been emitted by the expected
+        // source contract — otherwise any contract on the source chain could forge
+        // an event with the required signature.
         for (uint256 i; i < selectedEventLogs.length; i++) {
             require(selectedEventLogs[i].address_ == expectedSource, "log from unexpected source contract");
         }

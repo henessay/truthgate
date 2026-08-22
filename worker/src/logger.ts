@@ -1,6 +1,6 @@
 /**
- * Структурированные JSON-логи: каждый этап жизни события с таймстампами.
- * Эти логи — будущая витрина агента и демо, формат держим машиночитаемым.
+ * Structured JSON logs: every stage of an event's life, with timestamps.
+ * These logs feed the future agent view and the demo — keep the format machine-readable.
  */
 
 type Fields = Record<string, unknown>;
@@ -13,19 +13,19 @@ export interface LogEvent {
   [k: string]: unknown;
 }
 
-// Кольцевой буфер последних событий — витрина пайплайна для web (--serve).
-// Хранится уже сериализованная (bigint-безопасная) форма.
+// Ring buffer of recent events — the pipeline view for web (--serve).
+// Stores the already-serialized (bigint-safe) form.
 const BUFFER_MAX = 500;
 const buffer: LogEvent[] = [];
 let seqCounter = 0;
 
-/** События с seq > since (для поллинга фронтом с курсором). */
+/** Events with seq > since (for frontend polling with a cursor). */
 export function getLogEvents(since = 0): { latestSeq: number; events: LogEvent[] } {
   return { latestSeq: seqCounter, events: buffer.filter((e) => e.seq > since) };
 }
 
 function emit(level: 'info' | 'warn' | 'error', msg: string, fields: Fields = {}): void {
-  // BigInt в JSON не сериализуется — приводим к строке
+  // BigInt is not JSON-serializable — convert to string
   const line = JSON.stringify(
     { ts: new Date().toISOString(), level, msg, ...fields },
     (_k, v) => (typeof v === 'bigint' ? v.toString() : v),
@@ -43,7 +43,7 @@ export const log = {
   error: (msg: string, fields?: Fields) => emit('error', msg, fields),
 };
 
-/** Замер фазы: const done = phase('attestation', {...}); ...; done({extra}) */
+/** Phase timing: const done = phase('attestation', {...}); ...; done({extra}) */
 export function phase(name: string, fields: Fields = {}): (extra?: Fields) => number {
   const startedAt = Date.now();
   log.info(`phase:${name}:start`, fields);

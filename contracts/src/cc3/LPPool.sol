@@ -4,11 +4,11 @@ pragma solidity ^0.8.24;
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 /// @title LPPool
-/// @notice Пул ликвидности в нативном CTC. LP получают доли (shares), стоимость доли
-/// растёт за счёт процентной части возвратов. Выдачу и приём возвратов инициирует
-/// только CreditCore.
+/// @notice Liquidity pool in native CTC. LPs receive shares; the share price grows
+/// from the interest part of repayments. Issuance and repayment intake are initiated
+/// only by CreditCore.
 contract LPPool is Ownable {
-    /// @notice Доля процентной части, сжигаемая при каждом возврате (1000 = 10%).
+    /// @notice Share of the interest part burned on every repayment (1000 = 10%).
     uint256 public constant BURN_BPS = 1000;
     uint256 internal constant BPS_DENOMINATOR = 10_000;
     address public constant BURN_ADDRESS = address(0xdEaD);
@@ -18,11 +18,11 @@ contract LPPool is Ownable {
     uint256 public totalShares;
     mapping(address => uint256) public sharesOf;
 
-    /// @notice CTC, выданный под открытые займы. Входит в активы пула (требования к
-    /// заёмщикам), но не является свободной ликвидностью для unstake.
-    /// Погашения пути Б (wUSDC в казну RepaymentBridge) уменьшают эту величину не
-    /// напрямую, а через settle(): мост продаёт wUSDC за CTC (swapWusdcForCtc) и
-    /// немедленно заносит выручку сюда.
+    /// @notice CTC issued against open loans. Counts toward pool assets (claims on
+    /// borrowers) but is not free liquidity available for unstake.
+    /// Path B repayments (wUSDC into the RepaymentBridge treasury) decrease this
+    /// value not directly but via settle(): the bridge sells wUSDC for CTC
+    /// (swapWusdcForCtc) and immediately forwards the proceeds here.
     uint256 public outstandingPrincipal;
 
     address public bridge;
@@ -59,13 +59,14 @@ contract LPPool is Ownable {
         emit BridgeSet(newBridge);
     }
 
-    /// @notice Сеттлмент пути Б: RepaymentBridge продал wUSDC из казны за CTC и заносит
-    /// выручку в пул.
-    /// @param principalReleased Высвобождаемый принципал — РОВНО та часть пришедшего
-    /// CTC, что относится к телу (мост гарантирует principalReleased <= msg.value:
-    /// дисконт SwapDesk целиком ложится на процентную часть выручки, недопокрытие
-    /// тела из-за дисконта исключено constant-check'ом в конструкторе моста).
-    /// Кламп по outstandingPrincipal — чисто защитный, при корректном учёте не срабатывает.
+    /// @notice Path B settlement: RepaymentBridge sold wUSDC from its treasury for CTC
+    /// and forwards the proceeds to the pool.
+    /// @param principalReleased Principal being released — EXACTLY the part of the
+    /// incoming CTC attributed to principal (the bridge guarantees
+    /// principalReleased <= msg.value: the SwapDesk discount falls entirely on the
+    /// interest part of the proceeds; a discount-driven principal shortfall is ruled
+    /// out by the constant-check in the bridge's constructor).
+    /// The clamp by outstandingPrincipal is purely defensive; with correct accounting it never fires.
     function settle(uint256 principalReleased) external payable onlyBridge {
         require(principalReleased <= msg.value, "principal not cash-covered");
         uint256 released =
@@ -75,16 +76,16 @@ contract LPPool is Ownable {
         emit Settled(released, msg.value);
     }
 
-    /// @notice Активы пула: свободный баланс + выданное под открытые займы.
+    /// @notice Pool assets: free balance + amount issued against open loans.
     function totalAssets() public view returns (uint256) {
         return address(this).balance + outstandingPrincipal;
     }
 
-    /// @notice Внести нативный CTC, получить доли пропорционально текущим активам.
+    /// @notice Deposit native CTC and receive shares pro rata to current assets.
     function stake() external payable {
         require(msg.value > 0, "zero stake");
 
-        // msg.value уже лежит на балансе — доли считаем от активов ДО взноса
+        // msg.value is already on the balance — shares are computed from assets BEFORE the deposit
         uint256 assetsBefore = totalAssets() - msg.value;
         uint256 minted = totalShares == 0 ? msg.value : (msg.value * totalShares) / assetsBefore;
         require(minted > 0, "stake too small");
@@ -95,9 +96,9 @@ contract LPPool is Ownable {
         emit Staked(msg.sender, msg.value, minted);
     }
 
-    /// @notice Сжечь доли и вывести CTC. Зарезервированное под открытые займы
-    /// (outstandingPrincipal) вывести нельзя — выплата ограничена свободным балансом.
-    /// @param shares Количество долей к погашению.
+    /// @notice Burn shares and withdraw CTC. Funds reserved for open loans
+    /// (outstandingPrincipal) cannot be withdrawn — payout is limited to the free balance.
+    /// @param shares Number of shares to redeem.
     function unstake(uint256 shares) external {
         require(shares > 0, "zero shares");
         require(shares <= sharesOf[msg.sender], "insufficient shares");
@@ -114,7 +115,7 @@ contract LPPool is Ownable {
         emit Unstaked(msg.sender, amount, shares);
     }
 
-    /// @notice Выдача займа заёмщику. Только CreditCore.
+    /// @notice Loan issuance to a borrower. CreditCore only.
     function fund(address to, uint256 amount) external onlyCreditCore {
         require(amount <= address(this).balance, "insufficient free liquidity");
 
@@ -126,11 +127,11 @@ contract LPPool is Ownable {
         emit Funded(to, amount);
     }
 
-    /// @notice Приём возврата (тело + процент) в CTC. Только CreditCore.
-    /// Из процентной части BURN_BPS сжигается на 0xdEaD, остальное остаётся в пуле
-    /// и увеличивает стоимость доли LP.
-    /// @param principal Часть msg.value, являющаяся возвратом тела займа; остаток —
-    /// процент. Разбиение считает CreditCore (тело гасится первым).
+    /// @notice Repayment intake (principal + interest) in CTC. CreditCore only.
+    /// BURN_BPS of the interest part is burned to 0xdEaD; the rest stays in the pool
+    /// and increases the LP share price.
+    /// @param principal Part of msg.value that repays the loan principal; the
+    /// remainder is interest. The split is computed by CreditCore (principal is repaid first).
     function absorb(uint256 principal) external payable onlyCreditCore {
         require(principal <= msg.value, "principal exceeds payment");
         require(principal <= outstandingPrincipal, "principal exceeds outstanding");

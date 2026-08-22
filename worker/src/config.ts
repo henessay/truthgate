@@ -48,10 +48,10 @@ export function loadDeployments(): Deployments {
 }
 
 export const CONFIG = {
-  // Сети (CLAUDE.md): CC3 chainId 102031, Sepolia 11155111, chainKey Sepolia = 1
+  // Networks (CLAUDE.md): CC3 chainId 102031, Sepolia 11155111, chainKey Sepolia = 1
   chainKey: 1,
-  // SEPOLIA_RPC — один URL или список через запятую (первый — основной,
-  // остальные — фолбэк при ошибках провайдера)
+  // SEPOLIA_RPC — a single URL or a comma-separated list (first is the primary,
+  // the rest are fallbacks on provider errors)
   sepoliaRpcs: requireEnv('SEPOLIA_RPC')
     .split(',')
     .map((s) => s.trim())
@@ -60,23 +60,23 @@ export const CONFIG = {
   proverApiUrl: process.env.PROVER_API_URL ?? 'https://prover.cc3-testnet.creditcoin.network',
   privateKey: requireEnv('DEPLOYER_PRIVATE_KEY'),
 
-  // Интервалы и лимиты
+  // Intervals and limits
   pollIntervalMs: Number(process.env.WORKER_POLL_INTERVAL_MS ?? 15_000),
   attestPollMs: Number(process.env.WORKER_ATTEST_POLL_MS ?? 15_000),
-  // Аттестация Sepolia-блока на CC3 в практике ~8 минут; таймаут консервативный
+  // Attestation of a Sepolia block on CC3 takes ~8 minutes in practice; timeout is conservative
   attestTimeoutMs: Number(process.env.WORKER_ATTEST_TIMEOUT_MS ?? 1_200_000),
   maxAttempts: 5,
-  retryBaseDelayMs: 30_000, // экспоненциальный backoff: 30s, 60s, 120s, 240s, 480s
-  // Alchemy free tier режет eth_getLogs до 10 блоков; при ошибке про диапазон
-  // watcher дополнительно ужимает чанк сам (адаптивная деградация)
+  retryBaseDelayMs: 30_000, // exponential backoff: 30s, 60s, 120s, 240s, 480s
+  // Alchemy free tier caps eth_getLogs at 10 blocks; on a range error the
+  // watcher additionally shrinks the chunk on its own (adaptive degradation)
   getLogsChunk: Number(process.env.LOGS_CHUNK_SIZE ?? 9),
-  // Первая инициализация курсора: head − lookback, чтобы не терять события,
-  // отправленные до запуска worker'а
+  // First cursor initialization: head − lookback, so events sent before the
+  // worker started are not lost
   startLookbackBlocks: Number(process.env.START_LOOKBACK_BLOCKS ?? 50),
-  // Чанков за один pollOnce — чтобы длинный бэкфилл не блокировал очередь
+  // Chunks per pollOnce — so a long backfill does not block the queue
   maxChunksPerPoll: 20,
 
-  // WORKER_STATE_FILE — для тестов state-менеджмента на изолированном файле
+  // WORKER_STATE_FILE — for state-management tests on an isolated file
   stateFile: resolve(WORKER_DIR, process.env.WORKER_STATE_FILE ?? 'state.json'),
   failedFile: resolve(WORKER_DIR, 'failed.json'),
 } as const;

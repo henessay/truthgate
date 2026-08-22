@@ -8,7 +8,7 @@ interface WalletCtx {
   hasWallet: boolean;
   connecting: boolean;
   error: string | null;
-  /** 'cancelled' — пользователь сам отказал в кошельке (не ошибка) */
+  /** 'cancelled' — the user declined in the wallet themselves (not an error) */
   errorKind: 'cancelled' | 'error' | null;
   connect: () => Promise<void>;
 }

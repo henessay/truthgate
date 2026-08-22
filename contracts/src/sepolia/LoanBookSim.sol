@@ -4,17 +4,17 @@ pragma solidity ^0.8.24;
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 /// @title LoanBookSim
-/// @notice СИМУЛЯТОР внешней кредитной истории на Sepolia — только для демо.
-/// В проде на этом месте реальный кредитный протокол (Aave-подобный ордербук и т.п.),
-/// чьи события погашений TruthGate доказывает через USC-proof. Симулятор нужен,
-/// чтобы демонстрировать онбординг заёмщика с уже существующей историей: owner
-/// «проигрывает» погашения, worker доказывает их в CreditCore (action ScoreRepayment).
-/// ВАЖНО: сигнатура события обязана побайтово совпадать с
-/// CreditCore.REPAY_EVENT_SIGNATURE (см. test/EventParity.t.sol).
+/// @notice SIMULATOR of an external credit history on Sepolia — demo only.
+/// In production this slot is a real credit protocol (an Aave-like order book etc.)
+/// whose repayment events TruthGate proves via USC proofs. The simulator exists to
+/// demonstrate onboarding a borrower with pre-existing history: the owner "replays"
+/// repayments, and the worker proves them into CreditCore (action ScoreRepayment).
+/// IMPORTANT: the event signature must match CreditCore.REPAY_EVENT_SIGNATURE
+/// byte-for-byte (see test/EventParity.t.sol).
 contract LoanBookSim is Ownable {
     /// @dev keccak256("LoanRepaidOnEth(address,uint256,uint256)") ==
-    /// CreditCore.REPAY_EVENT_SIGNATURE. CreditCore ожидает: topics.length == 2
-    /// (только borrower indexed), data == abi.encode(loanId, amount) (64 байта).
+    /// CreditCore.REPAY_EVENT_SIGNATURE. CreditCore expects: topics.length == 2
+    /// (only borrower indexed), data == abi.encode(loanId, amount) (64 bytes).
     event LoanRepaidOnEth(address indexed borrower, uint256 loanId, uint256 amount);
 
     constructor() Ownable(msg.sender) {}

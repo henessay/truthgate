@@ -3,9 +3,9 @@ import { log, getLogEvents } from './logger.js';
 import { loadState, loadFailed } from './state.js';
 
 /**
- * HTTP-витрина worker'а для web-фронта (`worker run --serve`).
- * Только чтение: state/failed с диска, события пайплайна из ring-буфера
- * логгера, лаг аттестации. CORS открыт — фронт живёт на другом порту.
+ * Worker HTTP facade for the web frontend (`worker run --serve`).
+ * Read-only: state/failed from disk, pipeline events from the logger's ring
+ * buffer, attestation lag. CORS is open — the frontend lives on another port.
  */
 
 export interface AttestationSnapshot {
@@ -22,7 +22,7 @@ function json(res: ServerResponse, body: unknown): void {
 }
 
 export function startServer(port: number, attestation: () => Promise<AttestationSnapshot>): Server {
-  // Кэш аттестации: фронт поллит каждые 3 с, реальный запрос — не чаще
+  // Attestation cache: the frontend polls every 3 s; the real request happens no more often
   let cached: { at: number; value: AttestationSnapshot } | null = null;
   const ATTESTATION_CACHE_MS = 3_000;
 

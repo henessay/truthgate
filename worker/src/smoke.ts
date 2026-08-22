@@ -1,10 +1,10 @@
 /**
- * Read-only smoke против живых сетей: не требует средств и деплоя.
- *  1. Sepolia RPC: голова чейна.
- *  2. CC3 RPC: precompile ChainInfo → последняя аттестованная высота chainKey=1.
- *  3. Лаг аттестации (Sepolia head − attested) в блоках и минутах (~12 c/блок).
- *  4. Prover API: доступность и готовность кэша по аттестованной высоте.
- * Запуск: pnpm tsx src/smoke.ts
+ * Read-only smoke test against live networks: needs no funds and no deployment.
+ *  1. Sepolia RPC: chain head.
+ *  2. CC3 RPC: precompile ChainInfo → latest attested height for chainKey=1.
+ *  3. Attestation lag (Sepolia head − attested) in blocks and minutes (~12 s/block).
+ *  4. Prover API: availability and cache readiness at the attested height.
+ * Run: pnpm tsx src/smoke.ts
  */
 import { JsonRpcProvider } from 'ethers';
 import { proofProvider, chainInfo } from '@gluwa/usc-sdk';
@@ -35,7 +35,7 @@ async function main(): Promise<void> {
 
   const doneProver = phase('smoke:prover-api', { url: CONFIG.proverApiUrl });
   const proofBuilder = new proofProvider.service.ProofBuilder(CONFIG.chainKey, CONFIG.proverApiUrl);
-  // Кэш prover'а по уже аттестованной высоте должен отвечать мгновенно
+  // The prover cache should respond instantly for an already attested height
   await proofBuilder.waitUntilHeightAttested(CONFIG.chainKey, attestedHeight, 2_000, 30_000);
   doneProver({ proverCacheReady: true, height: attestedHeight });
 

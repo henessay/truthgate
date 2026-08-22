@@ -1,6 +1,6 @@
 .pipeline { display: flex; flex-direction: column; gap: 24px; }
 
-/* --- верх: две неоморфные карточки --- */
+/* --- top: two neumorphic cards --- */
 .pipe-top { display: grid; grid-template-columns: 1fr 1.8fr; gap: 22px; }
 @media (max-width: 900px) { .pipe-top { grid-template-columns: 1fr; } }
 
@@ -16,7 +16,7 @@
 
 .pipe-h2 { font-size: 17px; margin-bottom: 10px; }
 
-/* --- лента событий: ПЛОСКИЕ карточки-строки, никакого рельефа --- */
+/* --- event feed: FLAT row cards, no relief --- */
 .pipe-feed { display: flex; flex-direction: column; }
 .pipe-card {
   padding: 16px 14px;
@@ -26,7 +26,7 @@
   gap: 12px;
 }
 .pipe-card:last-child { border-bottom: none; }
-/* активные события чуть подсвечены слева статусным цветом */
+/* active events get a subtle status-colored highlight on the left */
 .pipe-card.attestation { box-shadow: inset 2px 0 0 var(--amber); }
 .pipe-card.proof, .pipe-card.execute { box-shadow: inset 2px 0 0 var(--accent); }
 .pipe-card.failed { box-shadow: inset 2px 0 0 var(--red); }
@@ -36,7 +36,7 @@
 .pipe-event-name { font-weight: 600; font-size: 15px; }
 .pipe-card-links { display: flex; align-items: center; gap: 14px; font-size: 12.5px; }
 
-/* --- шаги фаз --- */
+/* --- phase steps --- */
 .pipe-steps { display: flex; align-items: center; gap: 0; flex-wrap: wrap; }
 .pipe-step { display: flex; align-items: center; }
 .pipe-dot {
@@ -76,7 +76,7 @@
   50% { box-shadow: 0 0 0 7px rgba(78, 161, 255, 0); }
 }
 
-/* --- прогресс аттестации: главная сцена демо --- */
+/* --- attestation progress: the demo's main scene --- */
 .attest-progress { display: flex; flex-direction: column; gap: 8px; }
 .attest-progress-bar {
   height: 10px;
@@ -91,7 +91,7 @@
   border-radius: 5px;
   background: linear-gradient(90deg, var(--amber), var(--accent-cyan));
   box-shadow: 0 0 10px var(--amber-glow);
-  transition: width 2.5s linear; /* плавное накопление между поллами */
+  transition: width 2.5s linear; /* smooth accumulation between polls */
 }
 .attest-progress-meta {
   display: flex;
@@ -104,7 +104,7 @@
 .attest-progress-meta b { color: var(--text); }
 .amber-text { color: var(--amber); }
 
-/* --- примечания к карточке --- */
+/* --- card notes --- */
 .pipe-note { font-size: 13px; color: var(--text-dim); }
 .pipe-note.failed { color: var(--red); }
 .pipe-note.done { color: var(--green); }

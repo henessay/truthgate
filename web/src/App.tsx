@@ -6,9 +6,9 @@ import { useWallet } from './lib/wallet';
 import './app.css';
 
 const TABS = [
-  { id: 'borrower', label: 'Заёмщик', ready: true },
-  { id: 'pipeline', label: 'Пайплайн proof’ов', ready: true },
-  { id: 'overview', label: 'Обзор', ready: false },
+  { id: 'borrower', label: 'Borrower', ready: true },
+  { id: 'pipeline', label: 'Proof Pipeline', ready: true },
+  { id: 'overview', label: 'Overview', ready: false },
   { id: 'swap', label: 'SwapDesk', ready: false },
 ] as const;
 
@@ -31,7 +31,7 @@ export function App() {
               key={t.id}
               className={`tab ${tab === t.id ? 'active' : ''}`}
               disabled={!t.ready}
-              title={t.ready ? undefined : 'скоро'}
+              title={t.ready ? undefined : 'soon'}
               onClick={() => setTab(t.id)}
             >
               {t.label}
@@ -45,10 +45,10 @@ export function App() {
             <button
               className="neo-btn wallet-btn"
               disabled={!hasWallet || connecting}
-              title={hasWallet ? undefined : 'MetaMask не найден'}
+              title={hasWallet ? undefined : 'MetaMask not found'}
               onClick={() => void connect()}
             >
-              {connecting ? 'Подключение…' : hasWallet ? 'Подключить' : 'Нет кошелька'}
+              {connecting ? 'Connecting…' : hasWallet ? 'Connect' : 'No wallet'}
             </button>
           )}
         </div>

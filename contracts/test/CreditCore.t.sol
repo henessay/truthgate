@@ -15,14 +15,14 @@ contract CreditCoreTest is Test {
     address constant BURN = address(0xdEaD);
 
     address alice = address(0xA11CE); // LP
-    address bob = address(0xB0B); // заёмщик (тот же адрес на Sepolia и CC3)
+    address bob = address(0xB0B); // borrower (same address on Sepolia and CC3)
 
     MockNativeQueryVerifier mock;
     LPPool pool;
     CreditCore core;
 
-    // Локальные копии сигнатур: хелперы не должны делать внешних вызовов к core,
-    // иначе vm.expectRevert цепляется за вызов геттера, а не за execute.
+    // Local copies of the signatures: helpers must not make external calls to core,
+    // otherwise vm.expectRevert latches onto the getter call instead of execute.
     bytes32 constant DEPOSIT_SIG = keccak256("FundsDeposited(address,uint256,uint256)");
     bytes32 constant REPAY_SIG = keccak256("LoanRepaidOnEth(address,uint256,uint256)");
 
@@ -38,7 +38,7 @@ contract CreditCoreTest is Test {
         mock = MockNativeQueryVerifier(PRECOMPILE);
 
         pool = new LPPool();
-        core = new CreditCore(payable(address(pool)), 0, 0); // 0,0 → прод-дефолты 100k/25k
+        core = new CreditCore(payable(address(pool)), 0, 0); // 0,0 → production defaults 100k/25k
         pool.setCreditCore(address(core));
         core.registerVaultOnSepolia(VAULT_ON_SEPOLIA);
         core.registerLoanBookOnSepolia(LOANBOOK_ON_SEPOLIA);
@@ -112,7 +112,7 @@ contract CreditCoreTest is Test {
         (s, , , ) = core.borrowers(who);
     }
 
-    // ---------- скоринг ----------
+    // ---------- scoring ----------
 
     function test_eventSignatureConstants() public view {
         assertEq(core.DEPOSIT_EVENT_SIGNATURE(), keccak256("FundsDeposited(address,uint256,uint256)"));
@@ -122,35 +122,35 @@ contract CreditCoreTest is Test {
     function test_scoreGrowsOnlyViaValidProof() public {
         assertEq(_ethScore(bob), 0);
 
-        // событие с правильной сигнатурой, но от чужого контракта — не засчитывается
+        // an event with the right signature but from a foreign contract does not count
         vm.expectRevert("log from unexpected source contract");
         _execute(0, 100, _depositTx(address(0xDEAD00), bob, 1 ether, 1));
         assertEq(_ethScore(bob), 0);
 
-        // событие погашения, засабмиченное под action=ScoreDeposit — сигнатура не совпадёт
+        // a repayment event submitted under action=ScoreDeposit — the signature will not match
         vm.expectRevert("No events of required type found");
         _execute(0, 101, _repayOnEthTx(LOANBOOK_ON_SEPOLIA, bob, 1, 1 ether));
         assertEq(_ethScore(bob), 0);
 
-        // валидный proof депозита
+        // a valid deposit proof
         _proveDeposit(1 ether, 102);
         assertEq(_ethScore(bob), 1 ether);
 
-        // валидный proof погашения на Sepolia: score += amount + плоский бонус
+        // a valid proof of repayment on Sepolia: score += amount + flat bonus
         _execute(1, 103, _repayOnEthTx(LOANBOOK_ON_SEPOLIA, bob, 7, 0.5 ether));
         assertEq(_ethScore(bob), 1.6 ether); // 1 + 0.5 + 0.1
     }
 
     function test_depositCirculationCappedByScoreCap() public {
-        // накрутка циркуляцией: три депозита одного и того же объёма (депозит →
-        // вывод → депозит) — суммарный вклад депозитов не превышает DEPOSIT_SCORE_CAP
+        // score farming by circulation: three deposits of the same funds (deposit →
+        // withdraw → deposit) — the total deposit contribution never exceeds DEPOSIT_SCORE_CAP
         _proveDeposit(1 ether, 300);
         _proveDeposit(1 ether, 301);
-        _proveDeposit(1 ether, 302); // сверх кэпа: верифицируется, но скор не растит
+        _proveDeposit(1 ether, 302); // over the cap: verifies, but does not grow the score
         assertEq(_ethScore(bob), core.DEPOSIT_SCORE_CAP());
         assertEq(core.depositScoreOf(bob), core.DEPOSIT_SCORE_CAP());
 
-        // погашения кэпом не ограничены
+        // repayments are not limited by the cap
         _execute(1, 303, _repayOnEthTx(LOANBOOK_ON_SEPOLIA, bob, 7, 1 ether));
         assertEq(_ethScore(bob), core.DEPOSIT_SCORE_CAP() + 1.1 ether);
     }
@@ -160,7 +160,7 @@ contract CreditCoreTest is Test {
         _proveDeposit(1 ether, 200);
         assertEq(_ethScore(bob), 1 ether);
 
-        // тот же height + тот же txIndex → тот же queryId → реплей отбит базой
+        // same height + same txIndex → same queryId → replay rejected by the base
         vm.expectRevert("Query already processed");
         _proveDeposit(1 ether, 200);
         assertEq(_ethScore(bob), 1 ether);
@@ -179,16 +179,16 @@ contract CreditCoreTest is Test {
     // ---------- borrow ----------
 
     function test_borrowOverLimitReverts() public {
-        // ethScore = 1 ETH → лимит = 5 + 9.9 = 14.9 CTC
+        // ethScore = 1 ETH → limit = 5 + 9.9 = 14.9 CTC
         _proveDeposit(1 ether, 100);
         assertEq(core.creditLimit(bob), 14.9 ether);
 
-        // 15 CTC + 5% процентов = 15.75 > 14.9
+        // 15 CTC + 5% interest = 15.75 > 14.9
         vm.prank(bob);
         vm.expectRevert("over credit limit");
         core.borrow(15 ether);
 
-        // без скоринга лимит нулевой
+        // without scoring the limit is zero
         vm.prank(alice);
         vm.expectRevert("over credit limit");
         core.borrow(1);
@@ -200,19 +200,19 @@ contract CreditCoreTest is Test {
         vm.prank(bob);
         uint256 loanId = core.borrow(10 ether);
 
-        // CTC дошёл до заёмщика, пул зарезервировал тело
+        // CTC reached the borrower, the pool reserved the principal
         assertEq(bob.balance, 10 ether);
         assertEq(address(pool).balance, 90 ether);
         assertEq(pool.outstandingPrincipal(), 10 ether);
         (, , uint256 openDebt, ) = core.borrowers(bob);
-        assertEq(openDebt, 10.5 ether); // тело + 5%
+        assertEq(openDebt, 10.5 ether); // principal + 5%
 
-        // полное погашение путём А
+        // full repayment via path A
         vm.deal(bob, 10.5 ether);
         vm.prank(bob);
         core.repayInCTC{value: 10.5 ether}(loanId);
 
-        // burn: 10% от процентной части 0.5 = 0.05; пул: 90 + 10 + 0.45
+        // burn: 10% of the 0.5 interest part = 0.05; pool: 90 + 10 + 0.45
         assertEq(BURN.balance, 0.05 ether);
         assertEq(address(pool).balance, 100.45 ether);
         assertEq(pool.outstandingPrincipal(), 0);
@@ -221,8 +221,8 @@ contract CreditCoreTest is Test {
         assertEq(repaid, 10.5 ether);
         assertEq(uint8(status), uint8(CreditCore.LoanStatus.Repaid));
 
-        // погашение в блоке выдачи: займ закрыт, но localScore не растёт —
-        // удержание короче MIN_HOLD_BLOCKS (см. секцию «localScore: анти-накрутка»)
+        // repayment in the origination block: the loan is closed, but localScore does
+        // not grow — held shorter than MIN_HOLD_BLOCKS (see the "localScore: anti score-farming" section)
         (, uint256 localScore, uint256 debtAfter, uint256 completed) = core.borrowers(bob);
         assertEq(localScore, 0);
         assertEq(debtAfter, 0);
@@ -242,7 +242,7 @@ contract CreditCoreTest is Test {
         (, , , uint256 repaid1, , , CreditCore.LoanStatus st1, ) = core.loans(loanId);
         assertEq(repaid1, 4 ether);
         assertEq(uint8(st1), uint8(CreditCore.LoanStatus.PartlyRepaid));
-        assertEq(pool.outstandingPrincipal(), 6 ether); // тело гасится первым
+        assertEq(pool.outstandingPrincipal(), 6 ether); // principal is repaid first
 
         vm.prank(bob);
         core.repayInCTC{value: 6.5 ether}(loanId);
@@ -250,16 +250,16 @@ contract CreditCoreTest is Test {
         assertEq(repaid2, 10.5 ether);
         assertEq(uint8(st2), uint8(CreditCore.LoanStatus.Repaid));
         assertEq(pool.outstandingPrincipal(), 0);
-        assertEq(BURN.balance, 0.05 ether); // сожжено только из процентной части
+        assertEq(BURN.balance, 0.05 ether); // burned only from the interest part
 
-        // переплата сверх остатка ревертит
+        // overpaying beyond the outstanding amount reverts
         vm.deal(bob, 1 ether);
         vm.prank(bob);
         vm.expectRevert("invalid loan status");
         core.repayInCTC{value: 1 ether}(loanId);
     }
 
-    // ---------- путь Б ----------
+    // ---------- path B ----------
 
     function test_bridgeRepayment_onlyBridge() public {
         _proveDeposit(1 ether, 100);
@@ -278,9 +278,9 @@ contract CreditCoreTest is Test {
         assertEq(usdcShare, 3 ether);
         assertEq(uint8(status), uint8(CreditCore.LoanStatus.PartlyRepaid));
 
-        // CTC не двигался: баланс пула и outstanding не изменились. Outstanding
-        // высвобождается позже — через LPPool.settle при продаже wUSDC SwapDesk'ом
-        // (см. RepaymentBridge.t.sol)
+        // No CTC moved: the pool balance and outstanding are unchanged. Outstanding
+        // is released later — via LPPool.settle when the SwapDesk sells the wUSDC
+        // (see RepaymentBridge.t.sol)
         assertEq(address(pool).balance, 90 ether);
         assertEq(pool.outstandingPrincipal(), 10 ether);
 
@@ -297,8 +297,8 @@ contract CreditCoreTest is Test {
         vm.prank(bob);
         core.repayInCTC{value: 8 ether}(loanId);
 
-        // закрывающий платёж — путь Б на полном сроке: heldBlocks считается по
-        // CC3-блоку доставки proof'а, формула та же, что для пути А
+        // the closing payment is path B at full term: heldBlocks is measured by the
+        // CC3 block of proof delivery, same formula as for path A
         vm.roll(block.number + core.LOAN_DURATION_BLOCKS());
         vm.prank(BRIDGE);
         core.creditRepaymentFromBridge(loanId, 2.5 ether);
@@ -308,20 +308,20 @@ contract CreditCoreTest is Test {
         assertEq(usdcShare, 2.5 ether);
         assertEq(uint8(status), uint8(CreditCore.LoanStatus.Repaid));
 
-        // principal 10 CTC на полный срок → 10/4.5 ≈ 2.22 единицы localScore
+        // principal of 10 CTC over the full term → 10/4.5 ≈ 2.22 units of localScore
         (, uint256 localScore, , uint256 completed) = core.borrowers(bob);
         assertEq(localScore, (uint256(10 ether) * 1 ether) / core.LOCAL_SCORE_NORM_PRINCIPAL());
         assertEq(completed, 1);
     }
 
-    // ---------- localScore: анти-накрутка ----------
+    // ---------- localScore: anti score-farming ----------
 
     function test_instantCycleFarming_noScoreNoLimitGrowth() public {
         _proveDeposit(1 ether, 100);
         uint256 limitBefore = core.creditLimit(bob); // 14.9 CTC
 
-        // атака: 20 циклов «занял минимум — вернул в том же блоке».
-        // Прежняя модель дала бы +20 localScore = +20 CTC лимита за ~0.001 CTC процентов
+        // attack: 20 cycles of "borrow the minimum — repay in the same block".
+        // The old model would grant +20 localScore = +20 CTC of limit for ~0.001 CTC of interest
         vm.deal(bob, 1 ether);
         for (uint256 i; i < 20; i++) {
             vm.prank(bob);
@@ -333,7 +333,7 @@ contract CreditCoreTest is Test {
         (, uint256 localScore, , uint256 completed) = core.borrowers(bob);
         assertEq(localScore, 0);
         assertEq(core.creditLimit(bob), limitBefore);
-        assertEq(completed, 20); // счётчик информационный, в лимит не входит
+        assertEq(completed, 20); // informational counter, not part of the limit
     }
 
     function test_fullTermRepayment_matchesOldModelScale() public {
@@ -343,14 +343,14 @@ contract CreditCoreTest is Test {
         vm.prank(bob);
         uint256 id = core.borrow(4.5 ether);
 
-        // ровно дедлайн: block.number == deadlineBlock — ещё не просрочка
+        // exactly the deadline: block.number == deadlineBlock — not overdue yet
         vm.roll(block.number + core.LOAN_DURATION_BLOCKS());
         vm.deal(bob, 4.725 ether);
         vm.prank(bob);
         core.repayInCTC{value: 4.725 ether}(id);
 
-        // нормировочный принципал на полном сроке → ровно 1 единица,
-        // прирост лимита +1 CTC — как «+1 за погашение» в прежней модели
+        // the normalization principal over the full term → exactly 1 unit,
+        // limit growth of +1 CTC — like the "+1 per repayment" of the old model
         (, uint256 localScore, , ) = core.borrowers(bob);
         assertEq(localScore, 1 ether);
         assertEq(core.creditLimit(bob), limitBefore + core.LOCAL_SCORE_K());
@@ -374,7 +374,7 @@ contract CreditCoreTest is Test {
         _proveDeposit(1 ether, 100);
         vm.deal(bob, 9.45 ether);
 
-        // на блок раньше порога — погашение штатное, скор нулевой
+        // one block before the threshold — repayment goes through, score stays zero
         vm.prank(bob);
         uint256 id1 = core.borrow(4.5 ether);
         vm.roll(block.number + core.MIN_HOLD_BLOCKS() - 1);
@@ -383,7 +383,7 @@ contract CreditCoreTest is Test {
         (, uint256 s1, , ) = core.borrowers(bob);
         assertEq(s1, 0);
 
-        // ровно на пороге — четверть полного скора (MIN_HOLD = срок/4)
+        // exactly at the threshold — a quarter of the full score (MIN_HOLD = term/4)
         vm.prank(bob);
         uint256 id2 = core.borrow(4.5 ether);
         vm.roll(block.number + core.MIN_HOLD_BLOCKS());
@@ -394,18 +394,18 @@ contract CreditCoreTest is Test {
     }
 
     function test_constructorDefaults_and_minHoldValidation() public {
-        // сентинел 0,0 → прод-дефолты
+        // sentinel 0,0 → production defaults
         assertEq(core.LOAN_DURATION_BLOCKS(), core.DEFAULT_LOAN_DURATION_BLOCKS());
         assertEq(core.MIN_HOLD_BLOCKS(), core.DEFAULT_MIN_HOLD_BLOCKS());
 
-        // порог не может превышать срок
+        // the threshold cannot exceed the term
         vm.expectRevert("min hold exceeds duration");
         new CreditCore(payable(address(pool)), 240, 241);
     }
 
-    /// Экономика подобия при сжатии срока (демо-деплой 240/60 против прод 100k/25k):
-    /// прирост localScore зависит от ДОЛИ срока удержания, не от абсолютной
-    /// длительности — одинаковая доля даёт одинаковый скор на обоих наборах параметров.
+    /// Scale similarity under term compression (demo deploy 240/60 vs production 100k/25k):
+    /// localScore growth depends on the FRACTION of the term the loan was held, not on
+    /// the absolute duration — the same fraction yields the same score on both parameter sets.
     function test_scoreScaleInvariantUnderCompressedSchedule() public {
         LPPool demoPool = new LPPool();
         CreditCore demo = new CreditCore(payable(address(demoPool)), 240, 60);
@@ -415,13 +415,13 @@ contract CreditCoreTest is Test {
         vm.prank(alice);
         demoPool.stake{value: 100 ether}();
 
-        // одинаковый ethScore на обоих ядрах (у каждого свой processedQueries)
+        // identical ethScore on both cores (each has its own processedQueries)
         _proveDeposit(1 ether, 100);
         _executeOn(demo, 0, 100, _depositTx(VAULT_ON_SEPOLIA, bob, 1 ether, 1));
 
         vm.deal(bob, 20 ether);
 
-        // половина срока: прод 50_000 блоков, демо 120 блоков → одинаковые 0.5 единицы
+        // half the term: production 50_000 blocks, demo 120 blocks → identical 0.5 units
         vm.prank(bob);
         uint256 idProd = core.borrow(4.5 ether);
         vm.roll(block.number + core.LOAN_DURATION_BLOCKS() / 2);
@@ -439,7 +439,7 @@ contract CreditCoreTest is Test {
         assertEq(sProd, sDemo);
         assertEq(sDemo, 0.5 ether);
 
-        // полный срок: ещё +1 единица на обоих
+        // full term: another +1 unit on both
         vm.prank(bob);
         uint256 idProd2 = core.borrow(4.5 ether);
         vm.roll(block.number + core.LOAN_DURATION_BLOCKS());
@@ -457,44 +457,44 @@ contract CreditCoreTest is Test {
         assertEq(sProd, sDemo);
         assertEq(sDemo, 1.5 ether);
 
-        // и лимиты выросли одинаково
+        // and the limits grew identically
         assertEq(core.creditLimit(bob), demo.creditLimit(bob));
     }
 
-    // ---------- LP-пул ----------
+    // ---------- LP pool ----------
 
     function test_expiredLoanRehabilitation() public {
         _proveDeposit(1 ether, 100);
         vm.prank(bob);
         uint256 loanId = core.borrow(10 ether);
 
-        // просрочка: дедлайн пройден, owner помечает займ Expired
+        // overdue: the deadline has passed, the owner marks the loan Expired
         vm.roll(block.number + core.LOAN_DURATION_BLOCKS() + 1);
         core.markLoanAsExpired(loanId);
 
-        // Expired-займ блокирует новый borrow
+        // an Expired loan blocks new borrows
         vm.prank(bob);
         vm.expectRevert("overdue loan outstanding");
         core.borrow(1 ether);
 
-        // штрафная ставка: interestDue 0.5 * 1.5 = 0.75 → totalDue 10.75
+        // penalty rate: interestDue 0.5 * 1.5 = 0.75 → totalDue 10.75
         assertEq(core.totalDueFor(loanId), 10.75 ether);
 
-        // погашение без штрафа не закрывает займ (остаётся Expired)
+        // repayment without the penalty does not close the loan (stays Expired)
         vm.deal(bob, 10.75 ether);
         vm.prank(bob);
         core.repayInCTC{value: 10.5 ether}(loanId);
         (, , , , , , CreditCore.LoanStatus stMid, ) = core.loans(loanId);
         assertEq(uint8(stMid), uint8(CreditCore.LoanStatus.Expired));
 
-        // доплата штрафа закрывает займ
+        // paying the penalty on top closes the loan
         vm.prank(bob);
         core.repayInCTC{value: 0.25 ether}(loanId);
         (, , , uint256 repaid, , , CreditCore.LoanStatus st, ) = core.loans(loanId);
         assertEq(repaid, 10.75 ether);
         assertEq(uint8(st), uint8(CreditCore.LoanStatus.Repaid));
 
-        // реабилитация: borrow разблокирован, но localScore/loansCompleted не выросли
+        // rehabilitation: borrow is unblocked, but localScore/loansCompleted did not grow
         (, uint256 localScore, uint256 openDebt, uint256 completed) = core.borrowers(bob);
         assertEq(localScore, 0);
         assertEq(completed, 0);
@@ -502,23 +502,23 @@ contract CreditCoreTest is Test {
         assertEq(core.openLoansOf(bob).length, 0);
 
         vm.prank(bob);
-        core.borrow(1 ether); // проходит
+        core.borrow(1 ether); // passes
     }
 
     function test_unstakeBlockedByReservedLiquidity() public {
-        // большой score через погашения (депозиты капятся): 1 + (9 + 0.1) = 10.1 ETH
+        // large score via repayments (deposits are capped): 1 + (9 + 0.1) = 10.1 ETH
         _proveDeposit(1 ether, 100);
         _execute(1, 101, _repayOnEthTx(LOANBOOK_ON_SEPOLIA, bob, 1, 9 ether));
 
         vm.prank(bob);
-        core.borrow(95 ether); // в пуле остаётся 5 свободных
+        core.borrow(95 ether); // 5 free CTC remain in the pool
 
-        // alice владеет 100% долей (активы 100), но свободно только 5
+        // alice owns 100% of the shares (assets 100), but only 5 are free
         vm.prank(alice);
         vm.expectRevert("liquidity reserved for open loans");
         pool.unstake(100 ether);
 
-        // частичный вывод в пределах свободной ликвидности проходит
+        // partial withdrawal within the free liquidity passes
         uint256 before = alice.balance;
         vm.prank(alice);
         pool.unstake(5 ether);

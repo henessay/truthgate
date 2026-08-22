@@ -2,19 +2,19 @@
 pragma solidity ^0.8.24;
 
 /// @title ScoringVault
-/// @notice Sepolia-эмиттер доказуемых фактов для скоринга TruthGate на CC3.
-/// Никакой лишней логики: депозит ETH → событие, которое worker доказывает через
-/// USC-proof в CreditCore (action ScoreDeposit).
-/// ВАЖНО: сигнатура события обязана побайтово совпадать с
-/// CreditCore.DEPOSIT_EVENT_SIGNATURE (см. test/EventParity.t.sol).
+/// @notice Sepolia emitter of provable facts for TruthGate scoring on CC3.
+/// No extra logic: an ETH deposit → an event, which the worker proves via a
+/// USC proof into CreditCore (action ScoreDeposit).
+/// IMPORTANT: the event signature must match CreditCore.DEPOSIT_EVENT_SIGNATURE
+/// byte-for-byte (see test/EventParity.t.sol).
 contract ScoringVault {
     mapping(address => uint256) public balanceOf;
-    /// @notice Инкрементальный per-depositor счётчик депозитов (нумерация с 1).
+    /// @notice Incremental per-depositor deposit counter (numbering starts at 1).
     mapping(address => uint256) public depositNonceOf;
 
     /// @dev keccak256("FundsDeposited(address,uint256,uint256)") ==
-    /// CreditCore.DEPOSIT_EVENT_SIGNATURE. CreditCore ожидает: topics.length == 2
-    /// (только depositor indexed), data == abi.encode(amount, nonce) (64 байта).
+    /// CreditCore.DEPOSIT_EVENT_SIGNATURE. CreditCore expects: topics.length == 2
+    /// (only depositor indexed), data == abi.encode(amount, nonce) (64 bytes).
     event FundsDeposited(address indexed depositor, uint256 amount, uint256 nonce);
 
     function deposit() external payable {
@@ -26,8 +26,9 @@ contract ScoringVault {
         emit FundsDeposited(msg.sender, msg.value, nonce);
     }
 
-    /// @notice Вывод без события для скоринга: вывод скор не растит, но и не
-    /// отнимает (v1) — накрутку циркуляцией гасит DEPOSIT_SCORE_CAP на CC3-стороне.
+    /// @notice Withdrawal without a scoring event: withdrawing neither grows nor
+    /// (in v1) reduces the score — score farming by circulation is countered by
+    /// DEPOSIT_SCORE_CAP on the CC3 side.
     function withdraw(uint256 amount) external {
         require(amount > 0, "zero amount");
         require(amount <= balanceOf[msg.sender], "insufficient balance");

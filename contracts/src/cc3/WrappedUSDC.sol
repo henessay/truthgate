@@ -4,10 +4,11 @@ pragma solidity ^0.8.24;
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /// @title WrappedUSDC
-/// @notice Обёртка USDC, запертого в RepaymentVault на Sepolia. Минтится ТОЛЬКО
-/// RepaymentBridge'ем против доказанного UsdcLockedForRepayment.
-/// 18 decimals: нативный USDC несёт 6, нормализацию ×1e12 делает RepaymentBridge
-/// (USDC_DECIMALS_SCALING) — здесь суммы уже в 18-dec единицах CC3-мира.
+/// @notice Wrapper for USDC locked in the RepaymentVault on Sepolia. Minted ONLY
+/// by the RepaymentBridge against a proven UsdcLockedForRepayment.
+/// 18 decimals: native USDC carries 6; the ×1e12 normalization is done by
+/// RepaymentBridge (USDC_DECIMALS_SCALING) — amounts here are already in the
+/// 18-dec units of the CC3 world.
 contract WrappedUSDC is ERC20 {
     address public immutable MINTER;
 

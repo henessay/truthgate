@@ -50,7 +50,7 @@ export function useScoreProofCount(address: string) {
   return useQuery({
     queryKey: ['scoreProofs', address],
     queryFn: () => fetchScoreProofCount(address),
-    refetchInterval: 60_000, // события истории — меняются редко
+    refetchInterval: 60_000, // historical events — change rarely
   });
 }
 
@@ -62,7 +62,7 @@ export function usePathBDeliveries() {
   });
 }
 
-/** После успешной транзакции перечитываем всё, что могло измениться. */
+/** After a successful transaction, refetch everything that could have changed. */
 function useInvalidateAll() {
   const qc = useQueryClient();
   return () => {
@@ -76,7 +76,7 @@ export function useBorrow() {
   const invalidate = useInvalidateAll();
   return useMutation({
     mutationFn: async (amountCtc: string) => {
-      if (!signer) throw new Error('Кошелёк не подключён');
+      if (!signer) throw new Error('Wallet not connected');
       const tx = await withSigner(creditCore, signer).borrow(parseEther(amountCtc));
       await tx.wait();
       return tx.hash as string;
@@ -90,7 +90,7 @@ export function useRepay() {
   const invalidate = useInvalidateAll();
   return useMutation({
     mutationFn: async ({ loanId, outstanding }: { loanId: bigint; outstanding: bigint }) => {
-      if (!signer) throw new Error('Кошелёк не подключён');
+      if (!signer) throw new Error('Wallet not connected');
       const tx = await withSigner(creditCore, signer).repayInCTC(loanId, { value: outstanding });
       await tx.wait();
       return tx.hash as string;

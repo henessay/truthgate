@@ -10,13 +10,13 @@ const SEPOLIA_EXPLORER = 'https://sepolia.etherscan.io';
 const SEPOLIA_BLOCK_TIME_S = 12;
 
 const STATUS_BADGE: Record<CardStatus, { cls: string; label: string }> = {
-  queued: { cls: 'idle', label: 'в очереди' },
-  attestation: { cls: 'pending', label: 'аттестация' },
-  proof: { cls: 'action', label: 'генерация proof’а' },
-  execute: { cls: 'action', label: 'доставка на CC3' },
-  done: { cls: 'proven', label: 'доказано' },
-  retry: { cls: 'pending', label: 'повтор' },
-  failed: { cls: 'rejected', label: 'отклонено' },
+  queued: { cls: 'idle', label: 'queued' },
+  attestation: { cls: 'pending', label: 'attestation' },
+  proof: { cls: 'action', label: 'generating proof' },
+  execute: { cls: 'action', label: 'delivering to CC3' },
+  done: { cls: 'proven', label: 'proven' },
+  retry: { cls: 'pending', label: 'retry' },
+  failed: { cls: 'rejected', label: 'rejected' },
 };
 
 const STATUS_ORDER: Record<CardStatus, number> = {
@@ -38,19 +38,19 @@ export function PipelineScreen() {
         <div className="neo-card pipe-worker-card">
           <div className="stat-title">Worker</div>
           {live.online === null ? (
-            <div className="dim">подключение…</div>
+            <div className="dim">connecting…</div>
           ) : live.online ? (
             <>
               <span className="badge proven">online</span>
               <div className="pipe-worker-meta num">
-                курсор Sepolia {live.cursor?.toLocaleString('ru-RU') ?? '—'} · в очереди {live.queueLength}
+                Sepolia cursor {live.cursor?.toLocaleString('en-US') ?? '—'} · queued {live.queueLength}
               </div>
             </>
           ) : (
             <>
               <span className="badge rejected">offline</span>
               <div className="pipe-worker-meta">
-                запустите <span className="mono">pnpm worker run --serve</span> — экран оживёт сам
+                run <span className="mono">pnpm worker run --serve</span> — the screen will come alive on its own
               </div>
             </>
           )}
@@ -60,11 +60,11 @@ export function PipelineScreen() {
       </div>
 
       <section>
-        <h2 className="pipe-h2">События</h2>
+        <h2 className="pipe-h2">Events</h2>
         {cards.length === 0 && (
           <p className="dim">
-            Пока пусто. Отправьте депозит или лок USDC на Sepolia — событие появится здесь и пройдёт путь
-            аттестация → proof → доставка на CC3.
+            Nothing yet. Send a deposit or a USDC lock on Sepolia — the event will appear here and travel
+            through attestation → proof → delivery to CC3.
           </p>
         )}
         <div className="pipe-feed">
@@ -77,51 +77,51 @@ export function PipelineScreen() {
   );
 }
 
-/** Виджет лага аттестации: сколько Sepolia уже «доказано» для CC3. */
+/** Attestation-lag widget: how much of Sepolia is already "proven" for CC3. */
 function AttestationWidget({ data, online }: { data: AttestationDto | null; online: boolean }) {
   return (
     <div className="neo-card pipe-attest-card">
-      <div className="stat-title">Аттестация Sepolia → CC3 (Attestcoin)</div>
+      <div className="stat-title">Attestation Sepolia → CC3 (Attestcoin)</div>
       {data ? (
         <>
           <div className="attest-gap num">
-            <span className="attest-gap-num">{data.gapBlocks.toLocaleString('ru-RU')}</span> блоков позади головы
-            <span className="dim"> (~{Math.round((data.gapBlocks * SEPOLIA_BLOCK_TIME_S) / 60)} мин — защита от реоргов)</span>
+            <span className="attest-gap-num">{data.gapBlocks.toLocaleString('en-US')}</span> blocks behind head
+            <span className="dim"> (~{Math.round((data.gapBlocks * SEPOLIA_BLOCK_TIME_S) / 60)} min — reorg protection)</span>
           </div>
           <div className="attest-heights num">
-            <span title="Последний аттестованный Sepolia-блок on-chain на CC3">
-              аттестовано <b className="proven-text">{data.latestAttestedHeight.toLocaleString('ru-RU')}</b>
+            <span title="Latest Sepolia block attested on-chain on CC3">
+              attested <b className="proven-text">{data.latestAttestedHeight.toLocaleString('en-US')}</b>
             </span>
             <span className="dim">/</span>
-            <span title="Голова Sepolia">
-              голова <b>{data.sepoliaHead.toLocaleString('ru-RU')}</b>
+            <span title="Sepolia head">
+              head <b>{data.sepoliaHead.toLocaleString('en-US')}</b>
             </span>
           </div>
         </>
       ) : (
-        <div className="dim">{online ? 'загрузка…' : 'нет данных — worker offline'}</div>
+        <div className="dim">{online ? 'loading…' : 'no data — worker offline'}</div>
       )}
     </div>
   );
 }
 
 const PHASES: { id: string; label: string }[] = [
-  { id: 'queued', label: 'обнаружено' },
-  { id: 'attestation', label: 'аттестация' },
+  { id: 'queued', label: 'detected' },
+  { id: 'attestation', label: 'attestation' },
   { id: 'proof', label: 'proof' },
-  { id: 'execute', label: 'доставка' },
-  { id: 'done', label: 'финал' },
+  { id: 'execute', label: 'delivery' },
+  { id: 'done', label: 'final' },
 ];
 
 function phaseIndex(status: CardStatus): number {
   switch (status) {
     case 'queued': return 0;
-    case 'retry': return 1; // повтор почти всегда — ожидание аттестации
+    case 'retry': return 1; // a retry almost always means waiting for attestation
     case 'attestation': return 1;
     case 'proof': return 2;
     case 'execute': return 3;
     case 'done': return 4;
-    case 'failed': return 3; // упало на доставке/валидации
+    case 'failed': return 3; // failed at delivery/validation
   }
 }
 
@@ -137,11 +137,11 @@ function EventCard({ card, attestation }: { card: PipelineCard; attestation: Att
           <span className="dim num">{describeArgs(card)}</span>
         </div>
         <div className="pipe-card-links num">
-          <a href={`${SEPOLIA_EXPLORER}/tx/${card.txHash}`} target="_blank" rel="noreferrer" title="Исходная Sepolia-транзакция">
+          <a href={`${SEPOLIA_EXPLORER}/tx/${card.txHash}`} target="_blank" rel="noreferrer" title="Source Sepolia transaction">
             Sepolia {shortHash(card.txHash)}
           </a>
           {card.cc3TxHash && (
-            <a href={`${CC3_EXPLORER}/tx/${card.cc3TxHash}`} target="_blank" rel="noreferrer" title="Доставка proof'а на CC3">
+            <a href={`${CC3_EXPLORER}/tx/${card.cc3TxHash}`} target="_blank" rel="noreferrer" title="Proof delivery on CC3">
               CC3 {shortHash(card.cc3TxHash)}
             </a>
           )}
@@ -166,7 +166,7 @@ function EventCard({ card, attestation }: { card: PipelineCard; attestation: Att
                   <span className="dim num"> {fmtDur(card.durations.attestation)}</span>
                 )}
                 {p.id === 'proof' && card.durations.proof !== undefined && (
-                  <span className="dim num"> {fmtDur(card.durations.proof)}{card.proofCached ? ' (кэш)' : ''}</span>
+                  <span className="dim num"> {fmtDur(card.durations.proof)}{card.proofCached ? ' (cached)' : ''}</span>
                 )}
                 {p.id === 'execute' && card.durations.execute !== undefined && (
                   <span className="dim num"> {fmtDur(card.durations.execute)}</span>
@@ -182,16 +182,16 @@ function EventCard({ card, attestation }: { card: PipelineCard; attestation: Att
 
       {(card.status === 'retry' || card.status === 'failed') && (
         <div className={`pipe-note ${card.status === 'failed' ? 'failed' : ''}`}>
-          {card.status === 'failed' ? 'Отклонено: ' : ''}
+          {card.status === 'failed' ? 'Rejected: ' : ''}
           {shortReason(card.error)}
-          {card.attempts ? ` · попытка ${card.attempts}` : ''}
+          {card.attempts ? ` · attempt ${card.attempts}` : ''}
         </div>
       )}
 
       {card.status === 'done' && card.cc3Event && (
         <div className="pipe-note done num">
-          {card.cc3Event} · газ {Number(card.gasUsed ?? 0).toLocaleString('ru-RU')}
-          {card.durations.total !== undefined ? ` · конец-в-конец ${fmtDur(card.durations.total)}` : ''}
+          {card.cc3Event} · gas {Number(card.gasUsed ?? 0).toLocaleString('en-US')}
+          {card.durations.total !== undefined ? ` · end-to-end ${fmtDur(card.durations.total)}` : ''}
         </div>
       )}
     </article>
@@ -199,9 +199,9 @@ function EventCard({ card, attestation }: { card: PipelineCard; attestation: Att
 }
 
 /**
- * Главная сцена демо: накопление доказательства.
- * Прогресс = (attested − baseline) / (eventBlock − baseline); baseline —
- * attested-высота в момент начала наблюдения, поэтому бар двигается все ~8 минут.
+ * The demo's main scene: proof accumulation.
+ * Progress = (attested − baseline) / (eventBlock − baseline); baseline is
+ * the attested height when observation started, so the bar moves for the whole ~8 minutes.
  */
 function AttestationProgress({ card, attestation }: { card: PipelineCard; attestation: AttestationDto | null }) {
   const eventBlock = card.blockNumber;
@@ -221,11 +221,11 @@ function AttestationProgress({ card, attestation }: { card: PipelineCard; attest
       </div>
       <div className="attest-progress-meta num">
         <span>
-          аттестовано <b>{latest.toLocaleString('ru-RU')}</b> → цель{' '}
-          <b>{eventBlock.toLocaleString('ru-RU')}</b>
+          attested <b>{latest.toLocaleString('en-US')}</b> → target{' '}
+          <b>{eventBlock.toLocaleString('en-US')}</b>
         </span>
         <span className="amber-text">
-          осталось {gap.toLocaleString('ru-RU')} блоков · ETA ~{etaMin} мин
+          {gap.toLocaleString('en-US')} blocks left · ETA ~{etaMin} min
         </span>
       </div>
     </div>
@@ -240,9 +240,9 @@ function describeArgs(card: PipelineCard): string {
       case 'FundsDeposited':
         return `${short(a.depositor)} · ${formatEther(a.amount)} ETH`;
       case 'UsdcLockedForRepayment':
-        return `${short(a.borrower)} · заём #${a.ccLoanId} · ${(Number(a.amount) / 1e6).toLocaleString('ru-RU')} USDC`;
+        return `${short(a.borrower)} · loan #${a.ccLoanId} · ${(Number(a.amount) / 1e6).toLocaleString('en-US')} USDC`;
       case 'LoanRepaidOnEth':
-        return `${short(a.borrower)} · заём #${a.loanId} · ${formatEther(a.amount)} ETH`;
+        return `${short(a.borrower)} · loan #${a.loanId} · ${formatEther(a.amount)} ETH`;
       default:
         return Object.values(a).map(short).join(' · ');
     }
@@ -257,7 +257,7 @@ function short(v: string | undefined): string {
 }
 
 function fmtDur(ms: number): string {
-  if (ms < 1_000) return `${ms} мс`;
-  if (ms < 120_000) return `${(ms / 1000).toFixed(1)} с`;
-  return `${Math.round(ms / 60_000)} мин`;
+  if (ms < 1_000) return `${ms} ms`;
+  if (ms < 120_000) return `${(ms / 1000).toFixed(1)} s`;
+  return `${Math.round(ms / 60_000)} min`;
 }

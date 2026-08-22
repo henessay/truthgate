@@ -6,8 +6,8 @@ import {LPPool} from "../src/cc3/LPPool.sol";
 import {CreditCore} from "../src/cc3/CreditCore.sol";
 import {RepaymentBridge} from "../src/cc3/RepaymentBridge.sol";
 
-/// @notice Деплой CC3-контрактов + связка + регистрация Sepolia-источников.
-/// Запускать ПОСЛЕ DeploySepolia (читает адреса из docs/deployments.json):
+/// @notice Deploys the CC3 contracts + wires them together + registers the Sepolia
+/// source contracts. Run AFTER DeploySepolia (reads addresses from docs/deployments.json):
 ///   forge script script/DeployCC3.s.sol --rpc-url cc3 --broadcast
 contract DeployCC3 is Script {
     function run() external {
@@ -21,8 +21,8 @@ contract DeployCC3 is Script {
 
         vm.startBroadcast(pk);
         LPPool pool = new LPPool();
-        // 0,0 → прод-дефолты (100_000 / 25_000); демо-деплой передаёт сжатые
-        // значения через env в deploy-cc3.sh (LOAN_DURATION_BLOCKS / MIN_HOLD_BLOCKS)
+        // 0,0 → production defaults (100_000 / 25_000); a demo deploy passes compressed
+        // values via env to deploy-cc3.sh (LOAN_DURATION_BLOCKS / MIN_HOLD_BLOCKS)
         CreditCore core = new CreditCore(payable(address(pool)), 0, 0);
         RepaymentBridge bridge = new RepaymentBridge(address(core), payable(address(pool)));
 
@@ -35,7 +35,7 @@ contract DeployCC3 is Script {
         bridge.registerRepaymentVault(repaymentVault);
         vm.stopBroadcast();
 
-        // Пересобираем deployments.json: секция sepolia (из прочитанного) + cc3
+        // Rebuild deployments.json: the sepolia section (from what was read) + cc3
         string memory s = "sepolia";
         vm.serializeAddress(s, "TestUSDC", usdcSepolia);
         vm.serializeAddress(s, "ScoringVault", scoringVault);

@@ -4,8 +4,8 @@ pragma solidity ^0.8.24;
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /// @title TestUSDC
-/// @notice Минимальный тестовый USDC для демо: 6 decimals (как настоящий USDC),
-/// public mint без ограничений — только для Sepolia.
+/// @notice Minimal test USDC for the demo: 6 decimals (like real USDC),
+/// unrestricted public mint — Sepolia only.
 contract TestUSDC is ERC20 {
     constructor() ERC20("Test USDC", "tUSDC") {}
 

@@ -11,16 +11,16 @@ export const ADDR = {
   sepolia: deployments.sepolia,
 } as const;
 
-/** Демо-заёмщик (identity v1: deployer == borrower == worker) — режим чтения без кошелька. */
+/** Demo borrower (identity v1: deployer == borrower == worker) — read-only mode without a wallet. */
 export const DEMO_BORROWER = '0x025A5616B35bd7D0B79d14DA58fa3e34CEd8a3d0';
 
-// Read-only инстансы на CC3-провайдере
+// Read-only instances on the CC3 provider
 export const creditCore = new Contract(ADDR.cc3.CreditCore, CreditCoreAbi, cc3Provider);
 export const repaymentBridge = new Contract(ADDR.cc3.RepaymentBridge, RepaymentBridgeAbi, cc3Provider);
 export const lpPool = new Contract(ADDR.cc3.LPPool, LPPoolAbi, cc3Provider);
 export const wrappedUsdc = new Contract(ADDR.cc3.WrappedUSDC, WrappedUSDCAbi, cc3Provider);
 
-/** Контракт с подписантом — для действий через MetaMask. */
+/** Contract with a signer attached — for actions via MetaMask. */
 export function withSigner(c: Contract, runner: ContractRunner): Contract {
   return c.connect(runner) as Contract;
 }
@@ -38,11 +38,11 @@ export interface LoanView {
   deadlineBlock: bigint;
   status: LoanStatusName;
   principalRepaid: bigint;
-  /** Валовая цена займа с учётом штрафа (totalDueFor) */
+  /** Gross loan cost including the penalty (totalDueFor) */
   totalDue: bigint;
-  /** Нетто-остаток: totalDue − repaidAmount (клампится в 0) */
+  /** Net outstanding: totalDue − repaidAmount (clamped at 0) */
   outstanding: bigint;
-  /** Потолок пути Б: 30% от principal + interestDue */
+  /** Path B cap: 30% of principal + interestDue */
   usdcCap: bigint;
 }
 
@@ -54,20 +54,20 @@ export interface BorrowerOverview {
   loansCompleted: bigint;
   creditLimit: bigint;
   available: bigint;
-  /* разложение лимита: BASE + slope×(ethScore−min) + K×localScore */
+  /* limit breakdown: BASE + slope×(ethScore−min) + K×localScore */
   baseLimit: bigint;
   fromEthScore: bigint;
   fromLocalScore: bigint;
 }
 
-/** Блок незадолго до деплоя CC3-контрактов — нижняя граница queryFilter'ов. */
+/** Block shortly before the CC3 contracts were deployed — lower bound for queryFilters. */
 export const CC3_DEPLOY_BLOCK = 5_315_000;
 
 export interface PoolStats {
   balance: bigint;
   totalAssets: bigint;
   totalShares: bigint;
-  /** Цена LP-доли ×1e18 (1e18 = 1.0) */
+  /** LP share price ×1e18 (1e18 = 1.0) */
   sharePrice: bigint;
   outstandingPrincipal: bigint;
 }
@@ -83,7 +83,7 @@ export async function fetchPoolStats(): Promise<PoolStats> {
   return { balance, totalAssets, totalShares, sharePrice, outstandingPrincipal };
 }
 
-/** Сколько Sepolia-транзакций доказано в скоринг заёмщика (события EthScoreIncreased). */
+/** How many Sepolia transactions were proven into the borrower's score (EthScoreIncreased events). */
 export async function fetchScoreProofCount(address: string): Promise<number> {
   const logs = await creditCore.queryFilter(creditCore.filters.EthScoreIncreased(address), CC3_DEPLOY_BLOCK);
   return logs.length;
@@ -94,7 +94,7 @@ export interface PathBDelivery {
   lastCc3TxHash: string;
 }
 
-/** Доставленные через мост погашения по займам: ccLoanId → {count, hash CC3-транзакции}. */
+/** Repayments delivered through the bridge, per loan: ccLoanId → {count, CC3 tx hash}. */
 export async function fetchPathBDeliveries(): Promise<Record<string, PathBDelivery>> {
   const logs = await repaymentBridge.queryFilter(
     repaymentBridge.filters.UsdcRepaymentProcessed(),
@@ -139,7 +139,7 @@ export async function fetchBorrowerOverview(address: string): Promise<BorrowerOv
   };
 }
 
-/** Все займы заёмщика (закрытые тоже — история важна для демо). Масштаб демо: единицы займов. */
+/** All of the borrower's loans (closed ones too — history matters for the demo). Demo scale: a handful of loans. */
 export async function fetchLoans(address: string): Promise<LoanView[]> {
   const [nextId, capBps] = await Promise.all([
     creditCore.nextLoanId() as Promise<bigint>,

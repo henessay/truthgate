@@ -10,7 +10,7 @@
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
-/* --- рельефные карточки показателей: лимит доминирует --- */
+/* --- embossed stat cards: the limit dominates --- */
 .stat-row {
   display: grid;
   grid-template-columns: 1.7fr 1fr 1fr;
@@ -26,14 +26,14 @@
   color: var(--text-faint);
   font-weight: 500;
 }
-/* крупная сумма — главный визуальный элемент карточки */
+/* the large amount is the card's main visual element */
 .stat-value { font-size: 28px; font-weight: 600; line-height: 1.1; }
 .stat-value--hero { font-size: 46px; }
 .stat-sub { font-size: 16px; font-weight: 500; }
 .limit-breakdown { font-size: 12.5px; color: var(--text-dim); display: flex; gap: 6px; flex-wrap: wrap; }
 .limit-breakdown .sep { color: var(--text-faint); }
 
-/* след Attestcoin: скор существует только из доказанных Sepolia-транзакций */
+/* Attestcoin trace: the score exists only from proven Sepolia transactions */
 .attest-line {
   margin-top: 4px;
   padding-top: 10px;
@@ -43,7 +43,7 @@
 }
 .attest-line b { color: var(--accent-cyan); font-weight: 600; }
 
-/* --- нижний ряд: компактная карточка действия + таблица --- */
+/* --- bottom row: compact action card + table --- */
 .bottom-row {
   display: grid;
   grid-template-columns: 340px 1fr;
@@ -62,7 +62,7 @@
 .tx-error { margin: 0; color: var(--red); font-size: 13px; word-break: break-word; }
 .tx-ok { margin: 0; color: var(--green); font-size: 13px; }
 
-/* --- плоская таблица займов --- */
+/* --- flat loans table --- */
 .loans-section { display: flex; flex-direction: column; gap: 10px; }
 .loans-section h2 { font-size: 17px; }
 .deadline-cell { font-size: 13px; }

@@ -3,20 +3,20 @@ import { BrowserProvider, JsonRpcProvider, type JsonRpcSigner } from 'ethers';
 export const CC3_CHAIN_ID = 102031;
 export const SEPOLIA_CHAIN_ID = 11155111;
 
-// env через optional chaining: под Vite подставляется на билде, под node
-// (интеграционные проверки tsx'ом) import.meta.env отсутствует — берём дефолты
+// env via optional chaining: Vite substitutes it at build time; under node
+// (integration checks run with tsx) import.meta.env is absent — fall back to defaults
 const env = (import.meta as { env?: Record<string, string> }).env;
 const CC3_RPC = env?.VITE_CC3_RPC ?? 'https://rpc.cc3-testnet.creditcoin.network';
 const SEPOLIA_RPC = env?.VITE_SEPOLIA_RPC ?? 'https://ethereum-sepolia-rpc.publicnode.com';
 
-// staticNetwork обязателен для CC3: Substrate-EVM отдаёт заголовки без
-// prevRandao/mixHash, и автодетект сети/форматирование блоков у части
-// провайдеров ломается. Мы читаем только eth_call / blockNumber / getLogs —
-// с ними ethers против CC3 работает (проверено worker'ом).
+// staticNetwork is required for CC3: the Substrate-EVM returns block headers
+// without prevRandao/mixHash, which breaks network auto-detection / block
+// formatting in some providers. We only read eth_call / blockNumber / getLogs —
+// with those, ethers works fine against CC3 (verified by the worker).
 export const cc3Provider = new JsonRpcProvider(CC3_RPC, CC3_CHAIN_ID, { staticNetwork: true });
 export const sepoliaProvider = new JsonRpcProvider(SEPOLIA_RPC, SEPOLIA_CHAIN_ID, { staticNetwork: true });
 
-/** ~15 с/блок (замер по живой сети: 15060 с / 1000 блоков). Для обратных отсчётов. */
+/** ~15 s/block (measured on the live network: 15060 s / 1000 blocks). Used for countdowns. */
 export const CC3_BLOCK_TIME_S = 15;
 
 const CC3_CHAIN_PARAMS = {
@@ -42,7 +42,7 @@ interface WalletError {
   data?: { code?: number; originalError?: { code?: number; message?: string } };
 }
 
-/** 4902 «сеть не добавлена»: MetaMask кладёт код то на верхний уровень, то в data. */
+/** 4902 "chain not added": MetaMask puts the code either at the top level or inside data. */
 function isUnrecognizedChain(err: unknown): boolean {
   const e = err as WalletError;
   if (e?.code === 4902 || e?.data?.code === 4902 || e?.data?.originalError?.code === 4902) return true;
@@ -50,7 +50,7 @@ function isUnrecognizedChain(err: unknown): boolean {
   return /unrecognized chain|try adding the chain/i.test(msg);
 }
 
-/** 4001 — пользователь отклонил запрос в кошельке. */
+/** 4001 — the user rejected the request in the wallet. */
 export function isUserRejection(err: unknown): boolean {
   const e = err as WalletError;
   if (e?.code === 4001 || e?.data?.code === 4001 || e?.data?.originalError?.code === 4001) return true;
@@ -67,10 +67,10 @@ async function isOnCc3(eth: Eip1193): Promise<boolean> {
 }
 
 /**
- * Гарантировать сеть CC3 в кошельке:
- * switch → (4902, в т.ч. вложенный в data) → add с полными параметрами → switch.
- * Некоторые кошельки после add уже стоят на добавленной сети — ошибка повторного
- * switch не роняет флоу, если фактический chainId уже CC3.
+ * Ensure the CC3 chain in the wallet:
+ * switch → (4902, including when nested in data) → add with full params → switch.
+ * Some wallets are already on the added chain after add — a failing second
+ * switch doesn't break the flow if the actual chainId is already CC3.
  */
 async function ensureCc3Chain(eth: Eip1193): Promise<void> {
   try {
@@ -91,12 +91,12 @@ async function ensureCc3Chain(eth: Eip1193): Promise<void> {
 }
 
 /**
- * Подключение MetaMask: запрос аккаунта + переключение (или добавление) сети CC3.
- * Возвращает signer, привязанный к CC3.
+ * Connect MetaMask: request an account + switch to (or add) the CC3 chain.
+ * Returns a signer bound to CC3.
  */
 export async function connectWallet(): Promise<{ signer: JsonRpcSigner; address: string }> {
   const eth = injectedWallet();
-  if (!eth) throw new Error('MetaMask не найден: установите расширение');
+  if (!eth) throw new Error('MetaMask not found: install the extension');
 
   await eth.request({ method: 'eth_requestAccounts' });
   await ensureCc3Chain(eth);
@@ -106,10 +106,10 @@ export async function connectWallet(): Promise<{ signer: JsonRpcSigner; address:
   return { signer, address: await signer.getAddress() };
 }
 
-/** Человеческое сообщение вместо технического текста ошибки кошелька. */
+/** Human-friendly message instead of the wallet's technical error text. */
 export function friendlyWalletError(err: unknown): string {
-  if (isUserRejection(err)) return 'Подключение отменено в кошельке';
+  if (isUserRejection(err)) return 'Connection cancelled in the wallet';
   const msg = (err as Error)?.message ?? String(err);
-  if (/MetaMask не найден/.test(msg)) return msg;
-  return `Не удалось подключить кошелёк: ${msg.slice(0, 120)}`;
+  if (/MetaMask not found/.test(msg)) return msg;
+  return `Failed to connect wallet: ${msg.slice(0, 120)}`;
 }

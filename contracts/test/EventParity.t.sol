@@ -9,20 +9,20 @@ import {LoanBookSim} from "../src/sepolia/LoanBookSim.sol";
 import {RepaymentVault} from "../src/sepolia/RepaymentVault.sol";
 import {TestUSDC} from "../src/sepolia/TestUSDC.sol";
 
-/// @notice Гарантия побайтового совпадения событий Sepolia-контрактов с тем, что
-/// ожидают CC3-контракты. Два уровня:
-///  1) хэш сигнатуры события == константа CC3-контракта;
-///  2) live-эмиссия: реальный topic0, число топиков (indexed-поля) и layout data
-///     совпадают с тем, что декодируют CreditCore/_processAndEmitEvent и
-///     RepaymentBridge (topics.length == 2, data == 64 байта, порядок полей).
+/// @notice Guarantees byte-for-byte parity between the Sepolia contract events and
+/// what the CC3 contracts expect. Two levels:
+///  1) the event signature hash == the CC3 contract constant;
+///  2) live emission: the actual topic0, the topic count (indexed fields) and the data
+///     layout match what CreditCore/_processAndEmitEvent and RepaymentBridge decode
+///     (topics.length == 2, data == 64 bytes, field order).
 contract EventParityTest is Test {
     ScoringVault vault;
     LoanBookSim loanBook;
     TestUSDC usdc;
     RepaymentVault repayVault;
 
-    // CC3-контракты нужны только ради констант-сигнатур; адреса-заглушки в
-    // конструкторах достаточно (логика не вызывается)
+    // The CC3 contracts are needed only for their signature constants; stub
+    // addresses in the constructors suffice (their logic is never called)
     CreditCore core;
     RepaymentBridge bridge;
 
@@ -38,7 +38,7 @@ contract EventParityTest is Test {
         bridge = new RepaymentBridge(address(core), payable(address(1)));
     }
 
-    /// @dev Единственный лог с нужным эмитентом (recordLogs ловит и ERC20-события).
+    /// @dev The single log from the required emitter (recordLogs also captures ERC20 events).
     function _logFrom(Vm.Log[] memory logs, address emitter) internal pure returns (Vm.Log memory) {
         for (uint256 i; i < logs.length; i++) {
             if (logs[i].emitter == emitter) return logs[i];
@@ -46,7 +46,7 @@ contract EventParityTest is Test {
         revert("no log from emitter");
     }
 
-    // ---------- хэши сигнатур == константы CC3-контрактов ----------
+    // ---------- signature hashes == CC3 contract constants ----------
 
     function test_signatureHashesMatchCC3Constants() public view {
         assertEq(
@@ -66,7 +66,7 @@ contract EventParityTest is Test {
         );
     }
 
-    // ---------- live-эмиссия: topic0, indexed-поля, layout data ----------
+    // ---------- live emission: topic0, indexed fields, data layout ----------
 
     function test_fundsDeposited_liveParity() public {
         vm.deal(user, 1 ether);
@@ -77,14 +77,14 @@ contract EventParityTest is Test {
         Vm.Log memory log = _logFrom(vm.getRecordedLogs(), address(vault));
 
         assertEq(log.topics[0], core.DEPOSIT_EVENT_SIGNATURE());
-        // CreditCore._scoreDeposits: topics.length == 2, depositor из topics[1]
+        // CreditCore._scoreDeposits: topics.length == 2, depositor from topics[1]
         assertEq(log.topics.length, 2);
         assertEq(address(uint160(uint256(log.topics[1]))), user);
-        // data == abi.encode(amount, nonce), 64 байта, amount первым
+        // data == abi.encode(amount, nonce), 64 bytes, amount first
         assertEq(log.data.length, 64);
         (uint256 amount, uint256 nonce) = abi.decode(log.data, (uint256, uint256));
         assertEq(amount, 1 ether);
-        assertEq(nonce, 1); // инкрементальный per-depositor, с 1
+        assertEq(nonce, 1); // incremental per depositor, starting at 1
     }
 
     function test_loanRepaidOnEth_liveParity() public {
@@ -94,10 +94,10 @@ contract EventParityTest is Test {
         Vm.Log memory log = _logFrom(vm.getRecordedLogs(), address(loanBook));
 
         assertEq(log.topics[0], core.REPAY_EVENT_SIGNATURE());
-        // CreditCore._scoreRepayments: topics.length == 2, borrower из topics[1]
+        // CreditCore._scoreRepayments: topics.length == 2, borrower from topics[1]
         assertEq(log.topics.length, 2);
         assertEq(address(uint160(uint256(log.topics[1]))), user);
-        // data == abi.encode(loanId, amount), 64 байта, loanId первым
+        // data == abi.encode(loanId, amount), 64 bytes, loanId first
         assertEq(log.data.length, 64);
         (uint256 loanId, uint256 amount) = abi.decode(log.data, (uint256, uint256));
         assertEq(loanId, 42);
@@ -116,17 +116,17 @@ contract EventParityTest is Test {
         Vm.Log memory log = _logFrom(vm.getRecordedLogs(), address(repayVault));
 
         assertEq(log.topics[0], bridge.LOCK_EVENT_SIGNATURE());
-        // RepaymentBridge._processAndEmitEvent: topics.length == 2, borrower из topics[1]
+        // RepaymentBridge._processAndEmitEvent: topics.length == 2, borrower from topics[1]
         assertEq(log.topics.length, 2);
         assertEq(address(uint160(uint256(log.topics[1]))), user);
-        // data == abi.encode(ccLoanId, amount), 64 байта, ccLoanId первым;
-        // amount в нативных 6-dec USDC — мост нормализует ×1e12
+        // data == abi.encode(ccLoanId, amount), 64 bytes, ccLoanId first;
+        // amount in native 6-dec USDC — the bridge normalizes by ×1e12
         assertEq(log.data.length, 64);
         (uint256 ccLoanId, uint256 amount) = abi.decode(log.data, (uint256, uint256));
         assertEq(ccLoanId, 7);
         assertEq(amount, 3_000_000);
 
-        // USDC реально заперт
+        // the USDC is actually locked
         assertEq(usdc.balanceOf(address(repayVault)), 3_000_000);
         assertEq(repayVault.totalLocked(), 3_000_000);
     }

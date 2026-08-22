@@ -15,13 +15,13 @@ process.on('SIGTERM', () => {
   shuttingDown = true;
 });
 
-/** Основной цикл: watcher → очередь → конвейер (verifySingle, по одному proof'у). */
+/** Main loop: watcher → queue → pipeline (verifySingle, one proof at a time). */
 async function run(): Promise<void> {
   const deployments = loadDeployments();
   const pool = new SepoliaRpcPool(CONFIG.sepoliaRpcs, deployments);
   const deps = buildPipelineDeps(deployments);
 
-  // --serve: HTTP-витрина для web-фронта (state, события пайплайна, лаг аттестации)
+  // --serve: HTTP facade for the web frontend (state, pipeline events, attestation lag)
   let server: ReturnType<typeof startServer> | null = null;
   if (process.argv.includes('--serve')) {
     server = startServer(Number(process.env.WORKER_SERVE_PORT ?? 8787), async () => {
@@ -39,8 +39,8 @@ async function run(): Promise<void> {
       };
     });
   }
-  // state-дисциплина: память синхронизируется с диском ТОЛЬКО через syncState
-  // (мёрж под lock'ом) — снапшот памяти никогда не затирает внешние изменения
+  // State discipline: memory syncs with disk ONLY via syncState (merge under
+  // the lock) — a memory snapshot never clobbers external changes
   let state = loadState();
   let base = structuredClone(state);
 
@@ -54,8 +54,8 @@ async function run(): Promise<void> {
   });
 
   while (!shuttingDown) {
-    // 1. Новые события Sepolia → очередь. Ошибка poll'а НЕ прерывает цикл:
-    // очередь ниже обрабатывается в любом случае, а провайдер ротируется.
+    // 1. New Sepolia events → queue. A poll error does NOT break the loop:
+    // the queue below is processed regardless, and the provider rotates.
     try {
       const added = await pollOnce(pool.provider, pool.watched, state);
       if (added > 0) log.info('watcher:enqueued', { added, queued: state.queue.length });
@@ -63,12 +63,12 @@ async function run(): Promise<void> {
       log.warn('watcher:poll-error', { error: (err as Error).message });
       pool.rotate((err as Error).message);
     } finally {
-      // Частичный прогресс (чанки до ошибки) тоже сохраняем: события уже в очереди.
-      // Мёрж подхватывает внешние set-cursor/replay, случившиеся между тиками.
+      // Persist partial progress too (chunks scanned before the error): events are already queued.
+      // The merge picks up external set-cursor/replay changes made between ticks.
       ({ state, base } = syncState(state, base));
     }
 
-    // 2. Обработка очереди: строго по одному (verifySingle-режим, батчинг позже)
+    // 2. Queue processing: strictly one at a time (verifySingle mode, batching later)
     const now = Date.now();
     const due = state.queue.find((e) => e.notBeforeMs <= now);
     if (due) {
@@ -84,7 +84,7 @@ async function run(): Promise<void> {
           state.processedKeys.push(due.key);
         }
       }
-      // незавершённое переживает рестарт, завершённое не дублируется
+      // unfinished work survives a restart, finished work is not duplicated
       ({ state, base } = syncState(state, base));
     }
 
@@ -98,7 +98,7 @@ async function run(): Promise<void> {
   log.info('worker:stopped');
 }
 
-/** Статус: курсор, очередь, фейлы — человекочитаемо. */
+/** Status: cursor, queue, failures — human-readable. */
 async function status(): Promise<void> {
   const state = loadState();
   const failed = loadFailed();
@@ -122,12 +122,12 @@ async function status(): Promise<void> {
   );
 }
 
-/** Ручной перезапуск одного события по txHash: найти логи транзакции и поставить в очередь. */
+/** Manual replay of one event by txHash: find the transaction logs and enqueue them. */
 async function replay(txHash: string): Promise<void> {
   const deployments = loadDeployments();
   const pool = new SepoliaRpcPool(CONFIG.sepoliaRpcs, deployments);
 
-  // Receipt тянем с фолбэком по списку RPC
+  // Fetch the receipt with fallback across the RPC list
   let receipt = null;
   for (let i = 0; ; i++) {
     try {
@@ -141,9 +141,10 @@ async function replay(txHash: string): Promise<void> {
   if (!receipt) throw new Error(`Transaction ${txHash} not found on Sepolia`);
   const watched = pool.watched;
 
-  // Сначала собираем события (сеть), затем ОДНО эксклюзивное read-modify-write:
-  // updateState читает свежий state.json под lock'ом и синхронно пишет до выхода —
-  // результат replay виден в файле сразу и не может быть затёрт снапшотом памяти.
+  // First collect the events (network), then ONE exclusive read-modify-write:
+  // updateState reads the fresh state.json under the lock and writes synchronously
+  // before returning — the replay result is visible in the file immediately and
+  // cannot be clobbered by a memory snapshot.
   const pending: PendingEvent[] = [];
   for (const w of watched) {
     const address = (await w.contract.getAddress()).toLowerCase();
@@ -171,8 +172,8 @@ async function replay(txHash: string): Promise<void> {
   let enqueued = 0;
   const result = updateState((s) => {
     for (const ev of pending) {
-      // replay — принудительный: убираем из processedKeys, если был.
-      // Anti-replay контракта (queryId) — вторая линия: уже обработанный proof ревертнёт.
+      // replay is forced: remove from processedKeys if present.
+      // The contract's anti-replay (queryId) is the second line of defense: an already processed proof reverts.
       s.processedKeys = s.processedKeys.filter((k) => k !== ev.key);
       if (!s.queue.some((e) => e.key === ev.key)) {
         s.queue.push(ev);
@@ -189,7 +190,7 @@ async function replay(txHash: string): Promise<void> {
   pool.destroy();
 }
 
-/** Штатный сдвиг курсора watcher'а (вместо ручной правки state.json). */
+/** Sanctioned way to move the watcher cursor (instead of hand-editing state.json). */
 async function setCursor(arg: string): Promise<void> {
   const block = Number(arg);
   if (!Number.isInteger(block) || block < 0) {
