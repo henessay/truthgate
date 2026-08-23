@@ -63,7 +63,7 @@ export interface BorrowerOverview {
 }
 
 /** Block shortly before the CC3 contracts were deployed — lower bound for queryFilters. */
-export const CC3_DEPLOY_BLOCK = 5_360_125;
+export const CC3_DEPLOY_BLOCK = 5_362_097;
 
 export interface PoolStats {
   balance: bigint;

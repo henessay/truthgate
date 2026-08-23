@@ -10,16 +10,20 @@ All transactions are from EOA `0x025A5616B35bd7D0B79d14DA58fa3e34CEd8a3d0` (depl
 |---|---|---|---|
 | TestUSDC | Sepolia | `0x1Cc00628a8590e4eFDA496242439d5d09e726C14` | `0x9c8c845a376c4db553afca42dc8146db84252d3a5247ab97315ea885ba764dfa` |
 | ScoringVault | Sepolia | `0xe5f1cb738ba279440565D7B46fFAb38a0E52AF37` | `0x40f81653cbbea723558c66b90ccc979ae3dbd7cbf02d33670bc8519c094b9844` |
-| LoanBookSim | Sepolia | `0x77B4616343578526DCbE4580B70df6a40DFEb368` | `0xb3b0855382a171a7066588740e8820f961791a1e0332ae89fd8aba4b29ae98da` |
+| LoanBookSim v1 (historical) | Sepolia | `0x77B4616343578526DCbE4580B70df6a40DFEb368` | `0xb3b0855382a171a7066588740e8820f961791a1e0332ae89fd8aba4b29ae98da` |
+| LoanBookSim v2 (current) | Sepolia | `0x6da1A10d236607224d49De19e69885BC1f1Ad7af` | `0xa986bc9d38c91a1e5d26a9ff28ddb53231430d9e553e7802cba2eb7fe67b3775` |
 | RepaymentVault | Sepolia | `0xD694C9f83C6D8B9Ec4DCB7A54cD3305BB050deF1` | `0x58de33ea743fe149cb29bce45c86d2874e5098712d9b56a81c718f513cb6b3f4` |
 | LPPool | CC3 | `0x1Cc00628a8590e4eFDA496242439d5d09e726C14` | `0xc4aa762e2cedb72c6f3fd6025ad30f9fff6fd17a6a413e4812cddd7c1b5ff5b4` |
 | EvmV1Decoder (library) | CC3 | `0xD694C9f83C6D8B9Ec4DCB7A54cD3305BB050deF1` | `0x6a436437dc921def54a755df56b3150f4b2b3a0b64a2a6dc362cf16f2fcdc741` |
 | CreditCore v1 (historical) | CC3 | `0x62f0996Fe278321f7eF9701363830409021a3bB6` | `0x62918971d7be13ba7e248f8e2c598a504deef7095c3e39d3ca2334b5f2c0b641` |
 | RepaymentBridge v2 (historical) | CC3 | `0x179d6741664d546E059877eb43168FB11CE782AC` | `0x37e191c2565fd21f7ce9f0322f9e0cf14ac4ebea5fb612f24ff934016cbf377a` |
 | WrappedUSDC (historical) | CC3 | `0x46aA13812cD7f568601A696558B213F525B1CC91` | — (created by the RepaymentBridge constructor) |
-| CreditCore v2 (current) | CC3 | `0xC689F574b9Ab4A5008d87d307285F2179a825C05` | `0x836c02b14a6ba3c5c48ab28983241f4fdb1283631be058986675499c4c4b1b05` |
-| RepaymentBridge v3 (current) | CC3 | `0x6CF65BefF04fD95e5fe8cf5C021CEd16d18A61CA` | `0xc754ff0a9f8b69c916683b2ead45520826a0dbd18da94f633f92c80f536c1682` |
-| WrappedUSDC (current) | CC3 | `0x1f8461328635e337e8202D14bde1CfF159b5A5e3` | — (created by the RepaymentBridge constructor) |
+| CreditCore v2 (historical) | CC3 | `0xC689F574b9Ab4A5008d87d307285F2179a825C05` | `0x836c02b14a6ba3c5c48ab28983241f4fdb1283631be058986675499c4c4b1b05` |
+| RepaymentBridge v3 (historical) | CC3 | `0x6CF65BefF04fD95e5fe8cf5C021CEd16d18A61CA` | `0xc754ff0a9f8b69c916683b2ead45520826a0dbd18da94f633f92c80f536c1682` |
+| WrappedUSDC v2 (historical) | CC3 | `0x1f8461328635e337e8202D14bde1CfF159b5A5e3` | — (created by the RepaymentBridge constructor) |
+| CreditCore v3 (current) | CC3 | `0xD8710f1d5AA5e091529899566e0990365E864131` | `0x7df20281864ee1a038b613db812812ac04f1adce85e45b740899e2e1ac52e340` |
+| RepaymentBridge v4 (current) | CC3 | `0xcD0C3c2985Aa4881957A383eD6C855d6Bc18A4a1` | `0x7baa5403e682548b2569088250309617911c1bdbc6b064b176c520a98c0cd8e9` |
+| WrappedUSDC v3 (current) | CC3 | `0x30bB00344cd3c726372A053b8eA3Eac2b5E1d661` | — (created by the RepaymentBridge constructor) |
 
 The matching addresses across chains (LPPool ↔ TestUSDC, EvmV1Decoder ↔ RepaymentVault) are CREATE determinism: same deployer, same nonces.
 
@@ -36,6 +40,14 @@ to 0), and the three proven scoring deposits were replayed to the new core, rest
 proofs of the same Sepolia transactions. Every transaction hash in the tables below predates the redeploy and
 remains verifiable against the **historical** v1/v2 addresses above; loan history (loans #1–4) lives on the
 historical CreditCore, the new core starts from loan #1.
+
+CreditCore v2, RepaymentBridge v3 and LoanBookSim v1 were decommissioned later on 2026-08-23 with the addition
+of the liquidation penalty (negative scoring signal): LoanBookSim v2 emits Aave v3's real `LiquidationCall`
+layout byte-for-byte, and CreditCore v3 consumes it as action ScoreLiquidation — a flat per-event penalty
+(1 CTC for the first proven liquidation, 2 CTC each subsequent, total capped at 5 CTC) that burns only the
+earned bonus above BASE_LIMIT. The demo schedule (240/60 blocks) is unchanged. All six proven scoring deposits
+were replayed to CreditCore v3 with fresh proofs (ethScore 0.027 restored); one loan (2 CTC, held 64 blocks,
+repaid) lives on the historical v2 core.
 
 ## Demo cycle: transactions
 
