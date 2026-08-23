@@ -188,6 +188,14 @@ export function handleFailure(ev: PendingEvent, err: unknown): boolean {
   }
 
   if (errorClass === 'execute-reverted') {
+    // "Query already processed" is success, not failure: the contract marks the
+    // queryId only after ALL effects are applied (invariant #4), so this revert
+    // proves the proof was already delivered — typically by an earlier send of ours
+    // whose RPC response was lost (the tx still mined), then re-sent on retry.
+    if (message.includes('Query already processed')) {
+      log.info('event:completed', { key: ev.key, note: 'already processed on-chain (duplicate send absorbed by queryId anti-replay)' });
+      return true;
+    }
     // Do NOT retry: the revert is deterministic. Full context saved — a candidate for agent triage.
     log.error('event:failed-execute-reverted', { key: ev.key, error: message });
     appendFailed({ ...stripQueueFields(ev), failedAt: new Date().toISOString(), errorClass, fullError: message });
