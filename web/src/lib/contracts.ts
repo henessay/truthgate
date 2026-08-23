@@ -54,14 +54,14 @@ export interface BorrowerOverview {
   loansCompleted: bigint;
   creditLimit: bigint;
   available: bigint;
-  /* limit breakdown: BASE + slope×(ethScore−min) + K×localScore */
+  /* limit breakdown: BASE + slope×(ethScore−min) + K×localScore/1e18 */
   baseLimit: bigint;
   fromEthScore: bigint;
   fromLocalScore: bigint;
 }
 
 /** Block shortly before the CC3 contracts were deployed — lower bound for queryFilters. */
-export const CC3_DEPLOY_BLOCK = 5_315_000;
+export const CC3_DEPLOY_BLOCK = 5_360_125;
 
 export interface PoolStats {
   balance: bigint;
@@ -122,7 +122,8 @@ export async function fetchBorrowerOverview(address: string): Promise<BorrowerOv
     ]);
 
   const fromEthScore = ethScore >= minEth ? ((ethScore - minEth) * slopeNum) / slopeDen : 0n;
-  const fromLocalScore = localScore * localK;
+  // localScore is stored in 1e18 units (1e18 = one score unit = +LOCAL_SCORE_K to the limit)
+  const fromLocalScore = (localScore * localK) / 10n ** 18n;
   const available = creditLimit > openDebt ? creditLimit - openDebt : 0n;
 
   return {

@@ -14,15 +14,28 @@ All transactions are from EOA `0x025A5616B35bd7D0B79d14DA58fa3e34CEd8a3d0` (depl
 | RepaymentVault | Sepolia | `0xD694C9f83C6D8B9Ec4DCB7A54cD3305BB050deF1` | `0x58de33ea743fe149cb29bce45c86d2874e5098712d9b56a81c718f513cb6b3f4` |
 | LPPool | CC3 | `0x1Cc00628a8590e4eFDA496242439d5d09e726C14` | `0xc4aa762e2cedb72c6f3fd6025ad30f9fff6fd17a6a413e4812cddd7c1b5ff5b4` |
 | EvmV1Decoder (library) | CC3 | `0xD694C9f83C6D8B9Ec4DCB7A54cD3305BB050deF1` | `0x6a436437dc921def54a755df56b3150f4b2b3a0b64a2a6dc362cf16f2fcdc741` |
-| CreditCore | CC3 | `0x62f0996Fe278321f7eF9701363830409021a3bB6` | `0x62918971d7be13ba7e248f8e2c598a504deef7095c3e39d3ca2334b5f2c0b641` |
-| RepaymentBridge (v2) | CC3 | `0x179d6741664d546E059877eb43168FB11CE782AC` | `0x37e191c2565fd21f7ce9f0322f9e0cf14ac4ebea5fb612f24ff934016cbf377a` |
-| WrappedUSDC | CC3 | `0x46aA13812cD7f568601A696558B213F525B1CC91` | — (created by the RepaymentBridge constructor) |
+| CreditCore v1 (historical) | CC3 | `0x62f0996Fe278321f7eF9701363830409021a3bB6` | `0x62918971d7be13ba7e248f8e2c598a504deef7095c3e39d3ca2334b5f2c0b641` |
+| RepaymentBridge v2 (historical) | CC3 | `0x179d6741664d546E059877eb43168FB11CE782AC` | `0x37e191c2565fd21f7ce9f0322f9e0cf14ac4ebea5fb612f24ff934016cbf377a` |
+| WrappedUSDC (historical) | CC3 | `0x46aA13812cD7f568601A696558B213F525B1CC91` | — (created by the RepaymentBridge constructor) |
+| CreditCore v2 (current) | CC3 | `0xC689F574b9Ab4A5008d87d307285F2179a825C05` | `0x836c02b14a6ba3c5c48ab28983241f4fdb1283631be058986675499c4c4b1b05` |
+| RepaymentBridge v3 (current) | CC3 | `0x6CF65BefF04fD95e5fe8cf5C021CEd16d18A61CA` | `0xc754ff0a9f8b69c916683b2ead45520826a0dbd18da94f633f92c80f536c1682` |
+| WrappedUSDC (current) | CC3 | `0x1f8461328635e337e8202D14bde1CfF159b5A5e3` | — (created by the RepaymentBridge constructor) |
 
 The matching addresses across chains (LPPool ↔ TestUSDC, EvmV1Decoder ↔ RepaymentVault) are CREATE determinism: same deployer, same nonces.
 
 RepaymentBridge v1 (`0xEEd81A27df1D65E90B682264d23205E1ff03Aa8B`) was decommissioned on 2026-08-19: the live run
 exposed a comparison of a CC3-scale deadline against a Sepolia height (revert `repayment past deadline` on every repayment);
 the fixed bridge was redeployed with the check against CC3 `block.number`, with CreditCore and loan state preserved.
+
+CreditCore v1 and RepaymentBridge v2 were decommissioned on 2026-08-23 with the switch to the risk-proportional
+localScore model (score ∝ principal × held-time fraction, MIN_HOLD threshold, schedule in constructor parameters).
+The current demo deployment uses the compressed schedule `LOAN_DURATION_BLOCKS=240` (~1 hour), `MIN_HOLD_BLOCKS=60`
+(~15 minutes) — a time-scale compression for observability, not a change to the model (production defaults are
+100,000 / 25,000). Loan #4 was fully repaid on v1 before the pool was repointed (`outstandingPrincipal` returned
+to 0), and the three proven scoring deposits were replayed to the new core, restoring ethScore 0.017 with fresh
+proofs of the same Sepolia transactions. Every transaction hash in the tables below predates the redeploy and
+remains verifiable against the **historical** v1/v2 addresses above; loan history (loans #1–4) lives on the
+historical CreditCore, the new core starts from loan #1.
 
 ## Demo cycle: transactions
 

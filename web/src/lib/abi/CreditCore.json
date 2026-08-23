@@ -6,6 +6,16 @@
         "name": "pool_",
         "type": "address",
         "internalType": "address payable"
+      },
+      {
+        "name": "loanDurationBlocks_",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minHoldBlocks_",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "nonpayable"
@@ -13,6 +23,32 @@
   {
     "type": "function",
     "name": "BASE_LIMIT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "DEFAULT_LOAN_DURATION_BLOCKS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "DEFAULT_MIN_HOLD_BLOCKS",
     "inputs": [],
     "outputs": [
       {
@@ -129,7 +165,7 @@
   },
   {
     "type": "function",
-    "name": "LOCAL_SCORE_PER_LOAN",
+    "name": "LOCAL_SCORE_NORM_PRINCIPAL",
     "inputs": [],
     "outputs": [
       {
@@ -169,6 +205,19 @@
   {
     "type": "function",
     "name": "MIN_ETH_SCORE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MIN_HOLD_BLOCKS",
     "inputs": [],
     "outputs": [
       {

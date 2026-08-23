@@ -99,7 +99,7 @@ export function BorrowerScreen() {
           </div>
           {overview.data && (
             <div className="limit-breakdown num">
-              localScore {overview.data.localScore.toString()} · loans repaid{' '}
+              localScore {fmtCtc(overview.data.localScore, 2)} · loans repaid{' '}
               {overview.data.loansCompleted.toString()}
             </div>
           )}
