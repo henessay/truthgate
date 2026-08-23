@@ -66,6 +66,20 @@ export function buildWatchedContracts(provider: JsonRpcProvider, d: Deployments)
       argNames: ['borrower', 'loanId', 'amount'],
     },
     {
+      name: 'LoanBookSim',
+      contract: new Contract(d.sepolia.LoanBookSim, LOAN_BOOK_ABI, provider),
+      eventName: 'LiquidationCall',
+      argNames: [
+        'collateralAsset',
+        'debtAsset',
+        'user',
+        'debtToCover',
+        'liquidatedCollateralAmount',
+        'liquidator',
+        'receiveAToken',
+      ],
+    },
+    {
       name: 'RepaymentVault',
       contract: new Contract(d.sepolia.RepaymentVault, REPAYMENT_VAULT_ABI, provider),
       eventName: 'UsdcLockedForRepayment',

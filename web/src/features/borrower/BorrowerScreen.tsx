@@ -64,6 +64,14 @@ export function BorrowerScreen() {
               <span>ETH score {fmtCtc(overview.data.fromEthScore)}</span>
               <span className="sep">+</span>
               <span>local {fmtCtc(overview.data.fromLocalScore)}</span>
+              {overview.data.liquidationPenalty > 0n && (
+                <>
+                  <span className="sep">−</span>
+                  <span style={{ color: 'var(--amber)' }}>
+                    liquidations {fmtCtc(overview.data.liquidationPenalty)}
+                  </span>
+                </>
+              )}
             </div>
           )}
           {overview.data?.creditLimit === 0n && (

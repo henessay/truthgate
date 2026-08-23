@@ -58,6 +58,8 @@ export interface BorrowerOverview {
   baseLimit: bigint;
   fromEthScore: bigint;
   fromLocalScore: bigint;
+  /** Limit reduction from proven liquidations, clamped to the earned bonus (never eats the base). */
+  liquidationPenalty: bigint;
 }
 
 /** Block shortly before the CC3 contracts were deployed — lower bound for queryFilters. */
@@ -110,9 +112,9 @@ export async function fetchPathBDeliveries(): Promise<Record<string, PathBDelive
 }
 
 export async function fetchBorrowerOverview(address: string): Promise<BorrowerOverview> {
-  const [[ethScore, localScore, openDebt, loansCompleted], creditLimit, baseLimit, minEth, slopeNum, slopeDen, localK] =
+  const [borrowerRow, creditLimit, baseLimit, minEth, slopeNum, slopeDen, localK] =
     await Promise.all([
-      creditCore.borrowers(address) as Promise<[bigint, bigint, bigint, bigint]>,
+      creditCore.borrowers(address) as Promise<bigint[]>,
       creditCore.creditLimit(address) as Promise<bigint>,
       creditCore.BASE_LIMIT() as Promise<bigint>,
       creditCore.MIN_ETH_SCORE() as Promise<bigint>,
@@ -121,9 +123,16 @@ export async function fetchBorrowerOverview(address: string): Promise<BorrowerOv
       creditCore.LOCAL_SCORE_K() as Promise<bigint>,
     ]);
 
+  const [ethScore, localScore, openDebt, loansCompleted] = borrowerRow;
+  // 5th field appended in CreditCore v3 — tolerate a pre-liquidation ABI/deployment
+  const rawPenalty = borrowerRow[4] ?? 0n;
+
   const fromEthScore = ethScore >= minEth ? ((ethScore - minEth) * slopeNum) / slopeDen : 0n;
   // localScore is stored in 1e18 units (1e18 = one score unit = +LOCAL_SCORE_K to the limit)
   const fromLocalScore = (localScore * localK) / 10n ** 18n;
+  // Mirror the on-chain clamp: the penalty burns only the earned bonus, base survives
+  const bonus = fromEthScore + fromLocalScore;
+  const liquidationPenalty = rawPenalty > bonus ? bonus : rawPenalty;
   const available = creditLimit > openDebt ? creditLimit - openDebt : 0n;
 
   return {
@@ -137,6 +146,7 @@ export async function fetchBorrowerOverview(address: string): Promise<BorrowerOv
     baseLimit: creditLimit > 0n ? baseLimit : 0n,
     fromEthScore,
     fromLocalScore,
+    liquidationPenalty,
   };
 }
 

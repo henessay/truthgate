@@ -148,12 +148,18 @@ async function submitProof(
     throw err;
   }
 
-  // Finalization: look for the target event (EthScoreIncreased / UsdcRepaymentProcessed)
+  // Finalization: look for the target event
+  // (EthScoreIncreased / LiquidationPenaltyApplied / UsdcRepaymentProcessed)
   let queryId: string | undefined;
   for (const l of receipt.logs) {
     try {
       const parsed = contract.interface.parseLog({ topics: [...l.topics], data: l.data });
-      if (parsed && (parsed.name === 'EthScoreIncreased' || parsed.name === 'UsdcRepaymentProcessed')) {
+      if (
+        parsed &&
+        (parsed.name === 'EthScoreIncreased' ||
+          parsed.name === 'LiquidationPenaltyApplied' ||
+          parsed.name === 'UsdcRepaymentProcessed')
+      ) {
         queryId = String(parsed.args.queryId);
         log.info('event:finalized-on-cc3', { key: ev.key, cc3Event: parsed.name, queryId, cc3TxHash: tx.hash });
       }

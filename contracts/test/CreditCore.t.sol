@@ -25,6 +25,7 @@ contract CreditCoreTest is Test {
     // otherwise vm.expectRevert latches onto the getter call instead of execute.
     bytes32 constant DEPOSIT_SIG = keccak256("FundsDeposited(address,uint256,uint256)");
     bytes32 constant REPAY_SIG = keccak256("LoanRepaidOnEth(address,uint256,uint256)");
+    bytes32 constant LIQUIDATION_SIG = keccak256("LiquidationCall(address,address,address,uint256,uint256,address,bool)");
 
     // Layout-identical to EvmV1Decoder.LogEntryTuple: (address, bytes32[], bytes)
     struct LogTuple {
@@ -91,6 +92,25 @@ contract CreditCoreTest is Test {
         return _encodeTx(1, logs);
     }
 
+    /// @dev Aave v3 LiquidationCall layout: 4 topics (collateralAsset, debtAsset,
+    /// user indexed), data = abi.encode(debtToCover, liquidatedCollateralAmount,
+    /// liquidator, receiveAToken) — matches LoanBookSim / the real Aave event.
+    function _liquidationTx(address emitter, address user, uint256 debtToCover)
+        internal
+        view
+        returns (bytes memory)
+    {
+        LogTuple[] memory logs = new LogTuple[](1);
+        logs[0].address_ = emitter;
+        logs[0].topics = new bytes32[](4);
+        logs[0].topics[0] = LIQUIDATION_SIG;
+        logs[0].topics[1] = bytes32(uint256(uint160(address(0xC01A)))); // collateralAsset
+        logs[0].topics[2] = bytes32(uint256(uint160(address(0xDEB7)))); // debtAsset
+        logs[0].topics[3] = bytes32(uint256(uint160(user)));
+        logs[0].data = abi.encode(debtToCover, uint256(0.2 ether), address(0x11C0), false);
+        return _encodeTx(1, logs);
+    }
+
     function _execute(uint8 action, uint64 height, bytes memory encodedTx) internal returns (bool) {
         return _executeOn(core, action, height, encodedTx);
     }
@@ -109,7 +129,7 @@ contract CreditCoreTest is Test {
     }
 
     function _ethScore(address who) internal view returns (uint256 s) {
-        (s, , , ) = core.borrowers(who);
+        (s, , , , ) = core.borrowers(who);
     }
 
     // ---------- scoring ----------
@@ -176,6 +196,63 @@ contract CreditCoreTest is Test {
         assertEq(_ethScore(bob), 1 ether);
     }
 
+    // ---------- liquidation penalty ----------
+
+    function test_liquidationPenalty_proportionalAndCapped() public {
+        _proveDeposit(1 ether, 500); // ethScore 1 ETH → limit 5 + 0.99×10 = 14.9
+        uint256 limitBefore = core.creditLimit(bob);
+        assertEq(limitBefore, 14.9 ether);
+
+        // proportional: debtToCover 0.05 ETH × slope 10 → −0.5 CTC of limit
+        _execute(2, 501, _liquidationTx(LOANBOOK_ON_SEPOLIA, bob, 0.05 ether));
+        assertEq(core.creditLimit(bob), limitBefore - 0.5 ether);
+
+        // capped: a huge liquidation costs at most LIQUIDATION_PENALTY_CAP per proof
+        _execute(2, 502, _liquidationTx(LOANBOOK_ON_SEPOLIA, bob, 100 ether));
+        assertEq(core.creditLimit(bob), limitBefore - 0.5 ether - core.LIQUIDATION_PENALTY_CAP());
+
+        // ethScore is untouched — the penalty is a separate counter
+        assertEq(_ethScore(bob), 1 ether);
+        (, , , , uint256 penalty) = core.borrowers(bob);
+        assertEq(penalty, 0.5 ether + core.LIQUIDATION_PENALTY_CAP());
+
+        // wrong log shape (a 2-topic event forged under the liquidation signature) reverts
+        LogTuple[] memory logs = new LogTuple[](1);
+        logs[0].address_ = LOANBOOK_ON_SEPOLIA;
+        logs[0].topics = new bytes32[](2);
+        logs[0].topics[0] = LIQUIDATION_SIG;
+        logs[0].topics[1] = bytes32(uint256(uint160(bob)));
+        logs[0].data = abi.encode(uint256(1 ether), uint256(0), address(0), false);
+        vm.expectRevert("Invalid LiquidationCall topics");
+        _execute(2, 503, _encodeTx(1, logs));
+    }
+
+    /// The no-hard-block guard: liquidation proofs degrade, never lock out.
+    /// (1) the penalized bonus floors at 0; (2) BASE_LIMIT always survives;
+    /// (3) borrowing against the base still works after adversarial liquidation spam.
+    function test_liquidationNeverHardBlocks_baseLimitAndBorrowSurvive() public {
+        // established borrower with a modest earned bonus above the base
+        _proveDeposit(0.05 ether, 600); // ethScore 0.05 → limit 5 + 0.4 = 5.4
+        assertEq(core.creditLimit(bob), 5.4 ether);
+
+        // adversarial third party proves five liquidations, each far above the cap
+        for (uint64 i; i < 5; i++) {
+            _execute(2, 601 + i, _liquidationTx(LOANBOOK_ON_SEPOLIA, bob, 1000 ether));
+        }
+
+        // accumulated penalty (5 × 2 = 10 CTC) dwarfs the bonus (0.4 CTC), but the
+        // clamp floors the penalized bonus at 0: the limit is exactly BASE_LIMIT,
+        // never below — score floors at 0 with the base limit still available
+        assertEq(core.creditLimit(bob), core.BASE_LIMIT());
+
+        // and borrowing against the base limit still works — degraded, not locked out
+        vm.prank(bob);
+        uint256 loanId = core.borrow(1 ether);
+        assertEq(loanId, 1);
+        (, , uint256 openDebt, , ) = core.borrowers(bob);
+        assertEq(openDebt, 1.05 ether);
+    }
+
     // ---------- borrow ----------
 
     function test_borrowOverLimitReverts() public {
@@ -204,7 +281,7 @@ contract CreditCoreTest is Test {
         assertEq(bob.balance, 10 ether);
         assertEq(address(pool).balance, 90 ether);
         assertEq(pool.outstandingPrincipal(), 10 ether);
-        (, , uint256 openDebt, ) = core.borrowers(bob);
+        (, , uint256 openDebt, , ) = core.borrowers(bob);
         assertEq(openDebt, 10.5 ether); // principal + 5%
 
         // full repayment via path A
@@ -223,7 +300,7 @@ contract CreditCoreTest is Test {
 
         // repayment in the origination block: the loan is closed, but localScore does
         // not grow — held shorter than MIN_HOLD_BLOCKS (see the "localScore: anti score-farming" section)
-        (, uint256 localScore, uint256 debtAfter, uint256 completed) = core.borrowers(bob);
+        (, uint256 localScore, uint256 debtAfter, uint256 completed, ) = core.borrowers(bob);
         assertEq(localScore, 0);
         assertEq(debtAfter, 0);
         assertEq(completed, 1);
@@ -284,7 +361,7 @@ contract CreditCoreTest is Test {
         assertEq(address(pool).balance, 90 ether);
         assertEq(pool.outstandingPrincipal(), 10 ether);
 
-        (, , uint256 openDebt, ) = core.borrowers(bob);
+        (, , uint256 openDebt, , ) = core.borrowers(bob);
         assertEq(openDebt, 7.5 ether);
     }
 
@@ -309,7 +386,7 @@ contract CreditCoreTest is Test {
         assertEq(uint8(status), uint8(CreditCore.LoanStatus.Repaid));
 
         // principal of 10 CTC over the full term → 10/4.5 ≈ 2.22 units of localScore
-        (, uint256 localScore, , uint256 completed) = core.borrowers(bob);
+        (, uint256 localScore, , uint256 completed, ) = core.borrowers(bob);
         assertEq(localScore, (uint256(10 ether) * 1 ether) / core.LOCAL_SCORE_NORM_PRINCIPAL());
         assertEq(completed, 1);
     }
@@ -330,7 +407,7 @@ contract CreditCoreTest is Test {
             core.repayInCTC{value: 0.00105 ether}(id);
         }
 
-        (, uint256 localScore, , uint256 completed) = core.borrowers(bob);
+        (, uint256 localScore, , uint256 completed, ) = core.borrowers(bob);
         assertEq(localScore, 0);
         assertEq(core.creditLimit(bob), limitBefore);
         assertEq(completed, 20); // informational counter, not part of the limit
@@ -351,7 +428,7 @@ contract CreditCoreTest is Test {
 
         // the normalization principal over the full term → exactly 1 unit,
         // limit growth of +1 CTC — like the "+1 per repayment" of the old model
-        (, uint256 localScore, , ) = core.borrowers(bob);
+        (, uint256 localScore, , , ) = core.borrowers(bob);
         assertEq(localScore, 1 ether);
         assertEq(core.creditLimit(bob), limitBefore + core.LOCAL_SCORE_K());
     }
@@ -366,7 +443,7 @@ contract CreditCoreTest is Test {
         vm.prank(bob);
         core.repayInCTC{value: 4.725 ether}(id);
 
-        (, uint256 localScore, , ) = core.borrowers(bob);
+        (, uint256 localScore, , , ) = core.borrowers(bob);
         assertEq(localScore, 0.5 ether);
     }
 
@@ -380,7 +457,7 @@ contract CreditCoreTest is Test {
         vm.roll(block.number + core.MIN_HOLD_BLOCKS() - 1);
         vm.prank(bob);
         core.repayInCTC{value: 4.725 ether}(id1);
-        (, uint256 s1, , ) = core.borrowers(bob);
+        (, uint256 s1, , , ) = core.borrowers(bob);
         assertEq(s1, 0);
 
         // exactly at the threshold — a quarter of the full score (MIN_HOLD = term/4)
@@ -389,7 +466,7 @@ contract CreditCoreTest is Test {
         vm.roll(block.number + core.MIN_HOLD_BLOCKS());
         vm.prank(bob);
         core.repayInCTC{value: 4.725 ether}(id2);
-        (, uint256 s2, , ) = core.borrowers(bob);
+        (, uint256 s2, , , ) = core.borrowers(bob);
         assertEq(s2, 0.25 ether);
     }
 
@@ -434,8 +511,8 @@ contract CreditCoreTest is Test {
         vm.prank(bob);
         demo.repayInCTC{value: 4.725 ether}(idDemo);
 
-        (, uint256 sProd, , ) = core.borrowers(bob);
-        (, uint256 sDemo, , ) = demo.borrowers(bob);
+        (, uint256 sProd, , , ) = core.borrowers(bob);
+        (, uint256 sDemo, , , ) = demo.borrowers(bob);
         assertEq(sProd, sDemo);
         assertEq(sDemo, 0.5 ether);
 
@@ -452,8 +529,8 @@ contract CreditCoreTest is Test {
         vm.prank(bob);
         demo.repayInCTC{value: 4.725 ether}(idDemo2);
 
-        (, sProd, , ) = core.borrowers(bob);
-        (, sDemo, , ) = demo.borrowers(bob);
+        (, sProd, , , ) = core.borrowers(bob);
+        (, sDemo, , , ) = demo.borrowers(bob);
         assertEq(sProd, sDemo);
         assertEq(sDemo, 1.5 ether);
 
@@ -495,7 +572,7 @@ contract CreditCoreTest is Test {
         assertEq(uint8(st), uint8(CreditCore.LoanStatus.Repaid));
 
         // rehabilitation: borrow is unblocked, but localScore/loansCompleted did not grow
-        (, uint256 localScore, uint256 openDebt, uint256 completed) = core.borrowers(bob);
+        (, uint256 localScore, uint256 openDebt, uint256 completed, ) = core.borrowers(bob);
         assertEq(localScore, 0);
         assertEq(completed, 0);
         assertEq(openDebt, 0);

@@ -64,6 +64,18 @@ contract EventParityTest is Test {
             bridge.LOCK_EVENT_SIGNATURE(),
             "UsdcLockedForRepayment signature mismatch"
         );
+        // Aave v3 Pool's LiquidationCall — the known topic0 of the real deployment,
+        // pinned as a literal so a typo in our signature string cannot self-confirm
+        assertEq(
+            keccak256("LiquidationCall(address,address,address,uint256,uint256,address,bool)"),
+            core.LIQUIDATION_EVENT_SIGNATURE(),
+            "LiquidationCall signature mismatch"
+        );
+        assertEq(
+            core.LIQUIDATION_EVENT_SIGNATURE(),
+            0xe413a321e8681d831f4dbccbca790d2952b56f977908e45be37335533e005286,
+            "LiquidationCall topic0 differs from the real Aave v3 event"
+        );
     }
 
     // ---------- live emission: topic0, indexed fields, data layout ----------
@@ -102,6 +114,34 @@ contract EventParityTest is Test {
         (uint256 loanId, uint256 amount) = abi.decode(log.data, (uint256, uint256));
         assertEq(loanId, 42);
         assertEq(amount, 0.5 ether);
+    }
+
+    function test_liquidationCall_liveParity() public {
+        address collateral = address(0xC01A);
+        address debtAsset = address(0xDEB7);
+        address liquidator = address(0x11C0);
+
+        vm.recordLogs();
+        loanBook.simulateLiquidation(collateral, debtAsset, user, 0.15 ether, 0.2 ether, liquidator, false);
+
+        Vm.Log memory log = _logFrom(vm.getRecordedLogs(), address(loanBook));
+
+        assertEq(log.topics[0], core.LIQUIDATION_EVENT_SIGNATURE());
+        // CreditCore._scoreLiquidations: topics.length == 4 (Aave v3 indexes
+        // collateralAsset, debtAsset, user), borrower taken from topics[3]
+        assertEq(log.topics.length, 4);
+        assertEq(address(uint160(uint256(log.topics[1]))), collateral);
+        assertEq(address(uint160(uint256(log.topics[2]))), debtAsset);
+        assertEq(address(uint160(uint256(log.topics[3]))), user);
+        // data == abi.encode(debtToCover, liquidatedCollateralAmount, liquidator,
+        // receiveAToken), 128 bytes, debtToCover first
+        assertEq(log.data.length, 128);
+        (uint256 debtToCover, uint256 liquidatedCollateral, address liq, bool receiveAToken) =
+            abi.decode(log.data, (uint256, uint256, address, bool));
+        assertEq(debtToCover, 0.15 ether);
+        assertEq(liquidatedCollateral, 0.2 ether);
+        assertEq(liq, liquidator);
+        assertEq(receiveAToken, false);
     }
 
     function test_usdcLockedForRepayment_liveParity() public {

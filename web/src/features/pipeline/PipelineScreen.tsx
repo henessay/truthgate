@@ -243,6 +243,8 @@ function describeArgs(card: PipelineCard): string {
         return `${short(a.borrower)} · loan #${a.ccLoanId} · ${(Number(a.amount) / 1e6).toLocaleString('en-US')} USDC`;
       case 'LoanRepaidOnEth':
         return `${short(a.borrower)} · loan #${a.loanId} · ${formatEther(a.amount)} ETH`;
+      case 'LiquidationCall':
+        return `${short(a.user)} liquidated · debt ${formatEther(a.debtToCover)} covered by ${short(a.liquidator)}`;
       default:
         return Object.values(a).map(short).join(' · ');
     }

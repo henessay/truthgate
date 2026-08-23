@@ -14,7 +14,8 @@ contract CreditCore is TruthGateBase {
     // ---------- Actions (scoring, arrive via execute) ----------
     enum ScoreActions {
         ScoreDeposit, // 0: deposit into the vault on Sepolia
-        ScoreRepayment // 1: loan repayment on Sepolia
+        ScoreRepayment, // 1: loan repayment on Sepolia
+        ScoreLiquidation // 2: borrower liquidated on Sepolia (negative signal)
     }
     error InvalidAction(uint8 action);
 
@@ -28,6 +29,15 @@ contract CreditCore is TruthGateBase {
     // event: LoanRepaidOnEth(address indexed borrower, uint256 loanId, uint256 amount)
     bytes32 public constant REPAY_EVENT_SIGNATURE =
         0x9d2dba8b6b5cbf171f55f328240634b55005b55f505bfe0ac482893b92d0fd88;
+
+    // keccak256("LiquidationCall(address,address,address,uint256,uint256,address,bool)")
+    // Aave v3 Pool event, byte-for-byte: LiquidationCall(address indexed collateralAsset,
+    // address indexed debtAsset, address indexed user, uint256 debtToCover,
+    // uint256 liquidatedCollateralAmount, address liquidator, bool receiveAToken).
+    // The layout is deliberately Aave's real one (not a custom event) so the parser has
+    // a single implementation valid against both the simulator and a real Aave deployment.
+    bytes32 public constant LIQUIDATION_EVENT_SIGNATURE =
+        0xe413a321e8681d831f4dbccbca790d2952b56f977908e45be37335533e005286;
 
     // ---------- Lending parameters (v1: fixed constants) ----------
     /// @notice Fixed v1 rate: 500 = 5% for the loan term.
@@ -84,6 +94,11 @@ contract CreditCore is TruthGateBase {
     /// @notice Flat bonus per proven repayment act on Sepolia: the frequency of
     /// payment discipline carries its own weight, not just the volume.
     uint256 public constant FLAT_REPAYMENT_BONUS = 0.1 ether;
+    /// @notice Cap on the credit-limit reduction from a SINGLE proven liquidation.
+    /// A third-party liquidation proof degrades the earned bonus but must never
+    /// weaponize into a full lockout: per-proof damage is bounded, and creditLimit
+    /// additionally clamps the total penalty to the earned bonus (BASE_LIMIT survives).
+    uint256 public constant LIQUIDATION_PENALTY_CAP = 2 ether;
 
     // ---------- Loan state machine (USCLoanManager fork) ----------
     enum LoanStatus {
@@ -119,6 +134,11 @@ contract CreditCore is TruthGateBase {
         uint256 localScore;
         uint256 openDebt; // total outstanding debt (principal + interest)
         uint256 loansCompleted;
+        // Accumulated credit-limit reduction from proven liquidations (wei of CTC limit).
+        // Applied in creditLimit() against the earned bonus only — never against
+        // BASE_LIMIT. Field appended at the end of the struct to keep positions in
+        // the existing getter tuple unchanged.
+        uint256 liquidationPenalty;
     }
 
     LPPool public immutable POOL;
@@ -136,6 +156,7 @@ contract CreditCore is TruthGateBase {
     uint256 public nextLoanId = 1;
 
     event EthScoreIncreased(address indexed borrower, uint256 delta, bytes32 indexed queryId);
+    event LiquidationPenaltyApplied(address indexed borrower, uint256 penalty, bytes32 indexed queryId);
     event LoanOpened(
         uint256 indexed loanId, address indexed borrower, uint256 principal, uint256 interestDue, uint256 deadlineBlock
     );
@@ -190,7 +211,8 @@ contract CreditCore is TruthGateBase {
     // Path B repayments never arrive via execute at all (their proofs are handled
     // by RepaymentBridge), so all actions here are scoring actions.
     function _isFreshnessEnforced(uint8 action) internal pure override returns (bool) {
-        return action == uint8(ScoreActions.ScoreDeposit) || action == uint8(ScoreActions.ScoreRepayment);
+        return action == uint8(ScoreActions.ScoreDeposit) || action == uint8(ScoreActions.ScoreRepayment)
+            || action == uint8(ScoreActions.ScoreLiquidation);
     }
 
     function _processAndEmitEvent(uint8 action, bytes32 queryId, uint64, bytes memory encodedTransaction)
@@ -202,6 +224,8 @@ contract CreditCore is TruthGateBase {
             _scoreDeposits(queryId, encodedTransaction);
         } else if (action == uint8(ScoreActions.ScoreRepayment)) {
             _scoreRepayments(queryId, encodedTransaction);
+        } else if (action == uint8(ScoreActions.ScoreLiquidation)) {
+            _scoreLiquidations(queryId, encodedTransaction);
         } else {
             revert InvalidAction(action);
         }
@@ -255,6 +279,34 @@ contract CreditCore is TruthGateBase {
         }
     }
 
+    /// @dev Negative signal: a proven liquidation of the borrower on the source chain.
+    /// The event is Aave v3's real LiquidationCall (see LIQUIDATION_EVENT_SIGNATURE):
+    /// topics = [sig, collateralAsset, debtAsset, user], data = abi.encode(debtToCover,
+    /// liquidatedCollateralAmount, liquidator, receiveAToken). One parser for both the
+    /// simulator and a real Aave deployment.
+    /// Penalty = debtToCover × SCORE_SLOPE (symmetric with how deposits earn limit),
+    /// capped at LIQUIDATION_PENALTY_CAP per proof. v1 assumes an 18-decimal debt
+    /// asset (the simulator emits wei); production normalizes by the asset's decimals.
+    /// ethScore is NOT touched: the penalty accumulates separately and creditLimit
+    /// clamps it to the earned bonus, so BASE_LIMIT is never lost (no hard lockout).
+    function _scoreLiquidations(bytes32 queryId, bytes memory encodedTransaction) internal {
+        EvmV1Decoder.LogEntry[] memory logs =
+            _validateAndExtractLogs(encodedTransaction, LIQUIDATION_EVENT_SIGNATURE, loanBookOnSepolia);
+
+        for (uint256 i; i < logs.length; i++) {
+            require(logs[i].topics.length == 4, "Invalid LiquidationCall topics");
+            require(logs[i].data.length == 128, "Invalid LiquidationCall data");
+
+            address user = address(uint160(uint256(logs[i].topics[3])));
+            (uint256 debtToCover,,,) = abi.decode(logs[i].data, (uint256, uint256, address, bool));
+
+            uint256 penalty = (debtToCover * SCORE_SLOPE_NUM) / SCORE_SLOPE_DEN;
+            if (penalty > LIQUIDATION_PENALTY_CAP) penalty = LIQUIDATION_PENALTY_CAP;
+            borrowers[user].liquidationPenalty += penalty;
+            emit LiquidationPenaltyApplied(user, penalty, queryId);
+        }
+    }
+
     // ---------- Credit limit ----------
 
     function creditLimit(address borrowerAddr) public view returns (uint256) {
@@ -264,8 +316,14 @@ contract CreditCore is TruthGateBase {
         uint256 base = BASE_LIMIT + ((b.ethScore - MIN_ETH_SCORE) * SCORE_SLOPE_NUM) / SCORE_SLOPE_DEN;
         if (base > MAX_BASE_LIMIT) base = MAX_BASE_LIMIT;
 
-        // localScore is stored in 1e18 units → normalize back to whole units
-        return base + (b.localScore * LOCAL_SCORE_K) / 1 ether;
+        // Earned bonus above the base: deposit/repayment slope part plus the localScore
+        // part (localScore is stored in 1e18 units → normalize back to whole units).
+        uint256 bonus = (base - BASE_LIMIT) + (b.localScore * LOCAL_SCORE_K) / 1 ether;
+        // Liquidation penalties burn ONLY the earned bonus. The clamp floors the
+        // penalized bonus at 0 and guarantees a liquidated borrower keeps BASE_LIMIT:
+        // proven liquidations degrade the limit but can never hard-block borrowing.
+        uint256 penalty = b.liquidationPenalty > bonus ? bonus : b.liquidationPenalty;
+        return BASE_LIMIT + bonus - penalty;
     }
 
     // ---------- Loans ----------

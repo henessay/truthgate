@@ -145,7 +145,7 @@ contract RepaymentBridgeTest is Test {
         assertEq(usdcShare, 3 ether);
         assertEq(uint8(status), uint8(CreditCore.LoanStatus.PartlyRepaid));
 
-        (, , uint256 openDebt, ) = core.borrowers(bob);
+        (, , uint256 openDebt, , ) = core.borrowers(bob);
         assertEq(openDebt, 7.5 ether);
 
         // no CTC moved: the pool is untouched until the SwapDesk settlement
