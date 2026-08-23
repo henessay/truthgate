@@ -198,23 +198,34 @@ contract CreditCoreTest is Test {
 
     // ---------- liquidation penalty ----------
 
-    function test_liquidationPenalty_proportionalAndCapped() public {
+    function test_liquidationPenalty_flatEscalatingAndCapped() public {
         _proveDeposit(1 ether, 500); // ethScore 1 ETH → limit 5 + 0.99×10 = 14.9
         uint256 limitBefore = core.creditLimit(bob);
         assertEq(limitBefore, 14.9 ether);
 
-        // proportional: debtToCover 0.05 ETH × slope 10 → −0.5 CTC of limit
-        _execute(2, 501, _liquidationTx(LOANBOOK_ON_SEPOLIA, bob, 0.05 ether));
-        assertEq(core.creditLimit(bob), limitBefore - 0.5 ether);
+        // The penalty is per-event, NOT amount-proportional: debtToCover is in an
+        // arbitrary reserve token and its magnitude must not matter. First proof
+        // carries a "500 USDC"-scale amount (6 decimals) → flat −1 CTC.
+        _execute(2, 501, _liquidationTx(LOANBOOK_ON_SEPOLIA, bob, 500e6));
+        assertEq(core.creditLimit(bob), limitBefore - core.LIQUIDATION_PENALTY_FIRST());
 
-        // capped: a huge liquidation costs at most LIQUIDATION_PENALTY_CAP per proof
-        _execute(2, 502, _liquidationTx(LOANBOOK_ON_SEPOLIA, bob, 100 ether));
-        assertEq(core.creditLimit(bob), limitBefore - 0.5 ether - core.LIQUIDATION_PENALTY_CAP());
+        // Second proof carries a "500 DAI"-scale amount (18 decimals, 1e12× larger) —
+        // identical economics, escalated flat −2 CTC (repeat offense).
+        _execute(2, 502, _liquidationTx(LOANBOOK_ON_SEPOLIA, bob, 500e18));
+        assertEq(core.creditLimit(bob), limitBefore - 3 ether); // 1 + 2
+
+        // Third proof: another −2 → total 5 == LIQUIDATION_PENALTY_CAP
+        _execute(2, 503, _liquidationTx(LOANBOOK_ON_SEPOLIA, bob, 1));
+        assertEq(core.creditLimit(bob), limitBefore - core.LIQUIDATION_PENALTY_CAP());
+
+        // Fourth proof: total cap reached — verifies, emits, but adds nothing
+        _execute(2, 504, _liquidationTx(LOANBOOK_ON_SEPOLIA, bob, 1_000_000 ether));
+        assertEq(core.creditLimit(bob), limitBefore - core.LIQUIDATION_PENALTY_CAP());
 
         // ethScore is untouched — the penalty is a separate counter
         assertEq(_ethScore(bob), 1 ether);
         (, , , , uint256 penalty) = core.borrowers(bob);
-        assertEq(penalty, 0.5 ether + core.LIQUIDATION_PENALTY_CAP());
+        assertEq(penalty, core.LIQUIDATION_PENALTY_CAP());
 
         // wrong log shape (a 2-topic event forged under the liquidation signature) reverts
         LogTuple[] memory logs = new LogTuple[](1);
@@ -224,7 +235,7 @@ contract CreditCoreTest is Test {
         logs[0].topics[1] = bytes32(uint256(uint160(bob)));
         logs[0].data = abi.encode(uint256(1 ether), uint256(0), address(0), false);
         vm.expectRevert("Invalid LiquidationCall topics");
-        _execute(2, 503, _encodeTx(1, logs));
+        _execute(2, 505, _encodeTx(1, logs));
     }
 
     /// The no-hard-block guard: liquidation proofs degrade, never lock out.
@@ -235,14 +246,14 @@ contract CreditCoreTest is Test {
         _proveDeposit(0.05 ether, 600); // ethScore 0.05 → limit 5 + 0.4 = 5.4
         assertEq(core.creditLimit(bob), 5.4 ether);
 
-        // adversarial third party proves five liquidations, each far above the cap
+        // adversarial third party proves five liquidations with arbitrary huge amounts
         for (uint64 i; i < 5; i++) {
             _execute(2, 601 + i, _liquidationTx(LOANBOOK_ON_SEPOLIA, bob, 1000 ether));
         }
 
-        // accumulated penalty (5 × 2 = 10 CTC) dwarfs the bonus (0.4 CTC), but the
-        // clamp floors the penalized bonus at 0: the limit is exactly BASE_LIMIT,
-        // never below — score floors at 0 with the base limit still available
+        // accumulated penalty (1+2+2 = 5 CTC, the total cap) dwarfs the bonus
+        // (0.4 CTC), but the clamp floors the penalized bonus at 0: the limit is
+        // exactly BASE_LIMIT, never below — degraded score, base still available
         assertEq(core.creditLimit(bob), core.BASE_LIMIT());
 
         // and borrowing against the base limit still works — degraded, not locked out

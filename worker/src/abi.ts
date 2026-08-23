@@ -24,7 +24,7 @@ export const TRUTHGATE_EXECUTE_ABI = [
   'function execute(uint8 action, uint64 chainKey, uint64 blockHeight, bytes encodedTransaction, bytes32 merkleRoot, (bytes32 hash, bool isLeft)[] siblings, bytes32 lowerEndpointDigest, bytes32[] continuityRoots) returns (bool)',
   // Target events for finalization confirmation
   'event EthScoreIncreased(address indexed borrower, uint256 delta, bytes32 indexed queryId)',
-  'event LiquidationPenaltyApplied(address indexed borrower, uint256 penalty, bytes32 indexed queryId)',
+  'event LiquidationPenaltyApplied(address indexed borrower, uint256 penalty, uint256 debtToCover, bytes32 indexed queryId)',
   'event UsdcRepaymentProcessed(uint256 indexed ccLoanId, address indexed borrower, uint256 amount, bytes32 indexed queryId)',
 ];
 

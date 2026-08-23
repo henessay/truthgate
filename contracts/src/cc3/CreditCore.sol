@@ -94,11 +94,21 @@ contract CreditCore is TruthGateBase {
     /// @notice Flat bonus per proven repayment act on Sepolia: the frequency of
     /// payment discipline carries its own weight, not just the volume.
     uint256 public constant FLAT_REPAYMENT_BONUS = 0.1 ether;
-    /// @notice Cap on the credit-limit reduction from a SINGLE proven liquidation.
-    /// A third-party liquidation proof degrades the earned bonus but must never
-    /// weaponize into a full lockout: per-proof damage is bounded, and creditLimit
-    /// additionally clamps the total penalty to the earned bonus (BASE_LIMIT survives).
-    uint256 public constant LIQUIDATION_PENALTY_CAP = 2 ether;
+    /// @notice Credit-limit penalty for the FIRST proven liquidation of a borrower.
+    /// The penalty is per-event, NOT amount-proportional: debtToCover is denominated
+    /// in an arbitrary reserve token (500 USDC at 6 decimals vs 500 DAI at 18
+    /// decimals differ by 1e12), so amounts from heterogeneous assets cannot be
+    /// compared trustlessly without price oracles. The amount is still parsed and
+    /// emitted for transparency — it just never enters the formula.
+    uint256 public constant LIQUIDATION_PENALTY_FIRST = 1 ether;
+    /// @notice Penalty for each SUBSEQUENT proven liquidation: repeat offenses
+    /// escalate (1 CTC, then 2 CTC each).
+    uint256 public constant LIQUIDATION_PENALTY_REPEAT = 2 ether;
+    /// @notice Cap on the TOTAL accumulated liquidation penalty per borrower.
+    /// Together with the creditLimit clamp (the penalty burns only the earned bonus,
+    /// BASE_LIMIT survives), this guarantees third-party liquidation proofs degrade
+    /// but never weaponize into a full lockout.
+    uint256 public constant LIQUIDATION_PENALTY_CAP = 5 ether;
 
     // ---------- Loan state machine (USCLoanManager fork) ----------
     enum LoanStatus {
@@ -156,7 +166,11 @@ contract CreditCore is TruthGateBase {
     uint256 public nextLoanId = 1;
 
     event EthScoreIncreased(address indexed borrower, uint256 delta, bytes32 indexed queryId);
-    event LiquidationPenaltyApplied(address indexed borrower, uint256 penalty, bytes32 indexed queryId);
+    /// @dev debtToCover is emitted for transparency only — it does not affect the
+    /// penalty (heterogeneous reserve-token amounts are not comparable on-chain).
+    event LiquidationPenaltyApplied(
+        address indexed borrower, uint256 penalty, uint256 debtToCover, bytes32 indexed queryId
+    );
     event LoanOpened(
         uint256 indexed loanId, address indexed borrower, uint256 principal, uint256 interestDue, uint256 deadlineBlock
     );
@@ -284,9 +298,13 @@ contract CreditCore is TruthGateBase {
     /// topics = [sig, collateralAsset, debtAsset, user], data = abi.encode(debtToCover,
     /// liquidatedCollateralAmount, liquidator, receiveAToken). One parser for both the
     /// simulator and a real Aave deployment.
-    /// Penalty = debtToCover × SCORE_SLOPE (symmetric with how deposits earn limit),
-    /// capped at LIQUIDATION_PENALTY_CAP per proof. v1 assumes an 18-decimal debt
-    /// asset (the simulator emits wei); production normalizes by the asset's decimals.
+    /// Penalty is PER-EVENT with escalation: the first proven liquidation costs
+    /// LIQUIDATION_PENALTY_FIRST (1 CTC) of earned bonus, each subsequent one
+    /// LIQUIDATION_PENALTY_REPEAT (2 CTC), with the accumulated total capped at
+    /// LIQUIDATION_PENALTY_CAP (5 CTC). debtToCover deliberately does NOT enter the
+    /// formula — it is denominated in an arbitrary reserve token, and amounts across
+    /// heterogeneous assets (6-decimal USDC vs 18-decimal DAI) cannot be compared
+    /// trustlessly without price oracles; it is parsed and emitted for transparency.
     /// ethScore is NOT touched: the penalty accumulates separately and creditLimit
     /// clamps it to the earned bonus, so BASE_LIMIT is never lost (no hard lockout).
     function _scoreLiquidations(bytes32 queryId, bytes memory encodedTransaction) internal {
@@ -300,10 +318,15 @@ contract CreditCore is TruthGateBase {
             address user = address(uint160(uint256(logs[i].topics[3])));
             (uint256 debtToCover,,,) = abi.decode(logs[i].data, (uint256, uint256, address, bool));
 
-            uint256 penalty = (debtToCover * SCORE_SLOPE_NUM) / SCORE_SLOPE_DEN;
-            if (penalty > LIQUIDATION_PENALTY_CAP) penalty = LIQUIDATION_PENALTY_CAP;
-            borrowers[user].liquidationPenalty += penalty;
-            emit LiquidationPenaltyApplied(user, penalty, queryId);
+            // accumulated == 0 ⟺ no prior liquidation (the first penalty is nonzero)
+            uint256 accumulated = borrowers[user].liquidationPenalty;
+            uint256 penalty = accumulated == 0 ? LIQUIDATION_PENALTY_FIRST : LIQUIDATION_PENALTY_REPEAT;
+            uint256 room = LIQUIDATION_PENALTY_CAP > accumulated ? LIQUIDATION_PENALTY_CAP - accumulated : 0;
+            if (penalty > room) penalty = room;
+            borrowers[user].liquidationPenalty = accumulated + penalty;
+            // At the cap the penalty is 0, but the event is still emitted — the
+            // liquidation is verified and visible in history (as with the deposit cap)
+            emit LiquidationPenaltyApplied(user, penalty, debtToCover, queryId);
         }
     }
 
