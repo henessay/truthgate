@@ -47,6 +47,13 @@ localScoreDelta = principal × min(heldBlocks, LOAN_DURATION_BLOCKS) / LOAN_DURA
 
 Why the "borrow-and-repay cycle" attack no longer works: previously any full repayment gave a fixed `+1` (= +1 CTC of limit), and a cycle of minimal loans bought the limit for roughly 0.005% of its value (only the interest on a micro-loan). Now an instant cycle yields exactly 0 (both by the hold threshold and by the proportion `heldBlocks = 0`), and above the threshold the reward is proportional to `principal × time` — to gain +1 CTC of limit you must hold ~4.5 CTC for the full term and pay ~0.225 CTC of interest (5%), i.e. the limit costs ≥ ~22.5% of its value in paid interest, regardless of how it is split across loans. The only way to "farm" localScore is to actually use credit and pay for it — which is exactly the behavior being measured.
 
+## Credit bureau: protocol coverage beyond the live pipeline
+
+The bureau's parser library extends past the contracts wired into the live Sepolia pipeline. `docs/protocol-registry.json` is the machine-readable registry (protocol / deployments / events / category / tier); `contracts/test/MainnetParity.t.sol` pins every parser against **real historical transactions of the verified live mainnet contracts** — raw log bytes decoded through our parsers with every field asserted, source tx hash cited. A topic0 match alone cannot catch data-layout drift when a fork keeps the signature string but changes field assumptions; decoding real bytes can.
+
+- **Aave v3** (mainnet, verified tier + Sepolia, live tier): `Repay` → DISCIPLINE, `LiquidationCall` → NEGATIVE. `AaveV3Parser` is the single implementation.
+- **Spark (SparkLend)** (mainnet, verified tier; no Sepolia deployment exists): Aave v3 fork, both events verified **byte-identical** against live mainnet logs (pool identity checked on-chain: `getMarketId() == "Spark Protocol"`). Registers with `AaveV3Parser` — no code of its own.
+
 ## v1 limitations
 
 - **Identity model: a single EOA on both chains.** A participant's Sepolia address must match their CC3 address — the borrower is identified by the address from the indexed topic of the proven event. Smart-contract wallets and different addresses on different chains are not supported; if the event's borrower does not match the loan's borrower, the bridge rejects it (`borrower mismatch`).

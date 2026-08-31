@@ -1,0 +1,87 @@
+{
+  "$comment": "TruthGate credit-bureau protocol registry: which external-protocol events the bureau can consume as proven source-chain facts, with what parser, at what verification tier. Machine-readable source for the coverage table in docs. Evidence txs are real historical transactions on the live contract whose raw log bytes are pinned in contracts/test/MainnetParity.t.sol.",
+  "categories": {
+    "CAPITAL": "positive: proven capital committed (deposits, staking)",
+    "DISCIPLINE": "positive: proven debt repayment in an external protocol",
+    "NEGATIVE": "negative: proven liquidation of the subject"
+  },
+  "tiers": {
+    "live-pipeline": "consumed on CC3 today via attested Sepolia proofs (chainKey 1)",
+    "verified": "parser parity-pinned against real logs of the verified live mainnet contract; consumable once that chain is attested",
+    "roadmap": "registered target; parser not implemented yet"
+  },
+  "protocols": [
+    {
+      "id": "aave-v3",
+      "name": "Aave v3",
+      "parser": "AaveV3Parser",
+      "deployments": [
+        {
+          "chain": "ethereum",
+          "chainId": 1,
+          "address": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+          "tier": "verified",
+          "identity": "ADDRESSES_PROVIDER 0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e, getMarketId() == \"Aave Ethereum Market\", getPool() round-trips (checked on-chain 2026-08-31)"
+        },
+        {
+          "chain": "sepolia",
+          "chainId": 11155111,
+          "address": "0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951",
+          "tier": "live-pipeline",
+          "identity": "resolved from AddressesProvider 0x012bAC54348C0E635dCAc9D5FB99f06F24136C9A"
+        }
+      ],
+      "events": [
+        {
+          "name": "Repay",
+          "topic0": "0xa534c8dbe71f871f9f3530e97a74601fea17b426cae02e1c5aee42c96c784051",
+          "category": "DISCIPLINE",
+          "subject": "user (topics[2])",
+          "parserStatus": "implemented + mainnet-pinned; CreditCore action pending (ScoreAaveRepay)",
+          "evidenceTx": "0x0a3e7e61076ca8614fb1a102e5fc1b498ec2c5109d4bb29ba8bb8f80dad67b67"
+        },
+        {
+          "name": "LiquidationCall",
+          "topic0": "0xe413a321e8681d831f4dbccbca790d2952b56f977908e45be37335533e005286",
+          "category": "NEGATIVE",
+          "subject": "user (topics[3])",
+          "parserStatus": "live (CreditCore action ScoreLiquidation)",
+          "evidenceTx": "0x738c332fdc9b7024868036b70b1abf9004dece0585516da3388d5d1703dffbde"
+        }
+      ]
+    },
+    {
+      "id": "sparklend",
+      "name": "Spark (SparkLend)",
+      "parser": "AaveV3Parser",
+      "parserNote": "Aave v3 fork verified byte-identical on both events against live mainnet logs — same parser, no code of its own",
+      "deployments": [
+        {
+          "chain": "ethereum",
+          "chainId": 1,
+          "address": "0xC13e21B648A5Ee794902342038FF3aDAB66BE987",
+          "tier": "verified",
+          "identity": "ADDRESSES_PROVIDER 0x02C3eA4e34C0cBd694D2adFa2c690EECbC1793eE, getMarketId() == \"Spark Protocol\", getPool() round-trips (checked on-chain 2026-08-31); no Sepolia deployment exists"
+        }
+      ],
+      "events": [
+        {
+          "name": "Repay",
+          "topic0": "0xa534c8dbe71f871f9f3530e97a74601fea17b426cae02e1c5aee42c96c784051",
+          "category": "DISCIPLINE",
+          "subject": "user (topics[2])",
+          "parserStatus": "implemented + mainnet-pinned",
+          "evidenceTx": "0xde138405e078d7e25ea862e0a76259e5b9e758b906090b4f856381fa218e8b38"
+        },
+        {
+          "name": "LiquidationCall",
+          "topic0": "0xe413a321e8681d831f4dbccbca790d2952b56f977908e45be37335533e005286",
+          "category": "NEGATIVE",
+          "subject": "user (topics[3])",
+          "parserStatus": "implemented + mainnet-pinned",
+          "evidenceTx": "0x99b9105290b5c768a13b8e8b84810eb9d4fd622ffc7340ca65bd2b3764480720"
+        }
+      ]
+    }
+  ]
+}
