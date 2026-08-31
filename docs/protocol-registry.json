@@ -82,6 +82,46 @@
           "evidenceTx": "0x99b9105290b5c768a13b8e8b84810eb9d4fd622ffc7340ca65bd2b3764480720"
         }
       ]
+    },
+    {
+      "id": "morpho-blue",
+      "name": "Morpho Blue",
+      "parser": "MorphoBlueParser",
+      "parserNote": "singleton contract, one address serves every market; event declarations from the canonical morpho-org/morpho-blue EventsLib (Id user-defined type == bytes32 in the ABI signature)",
+      "deployments": [
+        {
+          "chain": "ethereum",
+          "chainId": 1,
+          "address": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+          "tier": "verified",
+          "identity": "address from docs.morpho.org; both topic0s confirmed against live emissions of this singleton (2026-08-31)"
+        },
+        {
+          "chain": "sepolia",
+          "chainId": 11155111,
+          "address": "0xd011EE229E7459ba1ddd22631eF7bF528d424A14",
+          "tier": "verified",
+          "identity": "official Sepolia deployment per docs.morpho.org (morpho-blue v1.0.0, same source); code present on-chain — candidate for live-pipeline wiring"
+        }
+      ],
+      "events": [
+        {
+          "name": "Repay",
+          "topic0": "0x52acb05cebbd3cd39715469f22afbf5a17496295ef3bc9bb5944056c63ccaa09",
+          "category": "DISCIPLINE",
+          "subject": "onBehalf (topics[3]) — the borrower whose debt shrinks, not the paying caller",
+          "parserStatus": "implemented + mainnet-pinned",
+          "evidenceTx": "0xad02aa86f2969a844af2055b89bebe18ed7383a0f818a44c1876e4cf90dc2303"
+        },
+        {
+          "name": "Liquidate",
+          "topic0": "0xa4946ede45d0c6f06a0f5ce92c9ad3b4751452d2fe0e25010783bcab57a67e41",
+          "category": "NEGATIVE",
+          "subject": "borrower (topics[3])",
+          "parserStatus": "implemented + mainnet-pinned",
+          "evidenceTx": "0xd47ca9ff33d59af1ff6dd0f2894f749d6799d5ed12f717f667c9c44bb70a2d2b"
+        }
+      ]
     }
   ]
 }

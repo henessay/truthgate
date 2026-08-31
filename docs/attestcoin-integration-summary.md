@@ -53,6 +53,7 @@ The bureau's parser library extends past the contracts wired into the live Sepol
 
 - **Aave v3** (mainnet, verified tier + Sepolia, live tier): `Repay` → DISCIPLINE, `LiquidationCall` → NEGATIVE. `AaveV3Parser` is the single implementation.
 - **Spark (SparkLend)** (mainnet, verified tier; no Sepolia deployment exists): Aave v3 fork, both events verified **byte-identical** against live mainnet logs (pool identity checked on-chain: `getMarketId() == "Spark Protocol"`). Registers with `AaveV3Parser` — no code of its own.
+- **Morpho Blue** (mainnet singleton + official Sepolia deployment, both verified tier): `Repay` → DISCIPLINE, `Liquidate` → NEGATIVE, via `MorphoBlueParser`. The DISCIPLINE subject is `onBehalf` — the borrower whose debt shrinks — not the paying `caller`; all amounts are loan-token denominated per market (heterogeneous), so per the bureau's design rule they are emit-only and never enter scoring arithmetic.
 
 ## v1 limitations
 

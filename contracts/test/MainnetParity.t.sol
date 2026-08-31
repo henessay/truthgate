@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {EvmV1Decoder} from "@gluwa/usc-contracts/contracts/decoding/EvmV1Decoder.sol";
 import {CreditCore} from "../src/cc3/CreditCore.sol";
 import {AaveV3Parser} from "../src/cc3/parsers/AaveV3Parser.sol";
+import {MorphoBlueParser} from "../src/cc3/parsers/MorphoBlueParser.sol";
 
 /// @notice Pins every bureau parser against REAL historical transactions of the
 /// live, verified mainnet contracts — raw topics and data bytes copied verbatim
@@ -19,6 +20,8 @@ import {AaveV3Parser} from "../src/cc3/parsers/AaveV3Parser.sol";
 ///    0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2
 ///  - SparkLend Pool (mainnet), "Spark Protocol":
 ///    0xC13e21B648A5Ee794902342038FF3aDAB66BE987
+///  - Morpho Blue singleton (mainnet, event declarations from the canonical
+///    morpho-org/morpho-blue EventsLib): 0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb
 contract MainnetParityTest is Test {
     // Signature constants only; logic never called (stub constructor args).
     CreditCore core;
@@ -174,5 +177,59 @@ contract MainnetParityTest is Test {
         assertEq(l.liquidatedCollateralAmount, 0xaa174f43cd66); // WETH wei
         assertEq(l.liquidator, 0xE08D97e151473A848C3d9CA3f323Cb720472D015);
         assertEq(l.receiveAToken, false);
+    }
+
+    // ---------- Morpho Blue (mainnet singleton) ----------
+
+    /// @dev Real Morpho Blue mainnet Repay: 05B0..9886 repays 121,876 raw loan-token
+    /// units on market ffd0..39bc for itself (caller == onBehalf).
+    /// tx 0xad02aa86f2969a844af2055b89bebe18ed7383a0f818a44c1876e4cf90dc2303, block 25873487.
+    function test_morphoBlue_repay_realTx() public pure {
+        EvmV1Decoder.LogEntry memory log = _log(
+            _topics4(
+                MorphoBlueParser.REPAY_TOPIC0,
+                0xffd010618ed3cb39bb2c5de0e3e58d3d2ec9f52187a180f29723c31756a939bc,
+                0x00000000000000000000000005b011922348325e7c9ece372560df92ea699886,
+                0x00000000000000000000000005b011922348325e7c9ece372560df92ea699886
+            ),
+            hex"000000000000000000000000000000000000000000000000000000000001dc14"
+            hex"0000000000000000000000000000000000000000000000000000001bf4f6d29c"
+        );
+
+        MorphoBlueParser.Repay memory r = MorphoBlueParser.parseRepay(log);
+        assertEq(r.marketId, 0xffd010618ed3cb39bb2c5de0e3e58d3d2ec9f52187a180f29723c31756a939bc);
+        assertEq(r.caller, 0x05B011922348325E7C9Ece372560DF92eA699886);
+        assertEq(r.onBehalf, 0x05B011922348325E7C9Ece372560DF92eA699886);
+        assertEq(r.assets, 0x1dc14);
+        assertEq(r.shares, 0x1bf4f6d29c);
+    }
+
+    /// @dev Real Morpho Blue mainnet Liquidate: borrower 860b..ed8f liquidated on
+    /// market 328a..fd06 by caller 60Dc..b5dB; no bad debt realized.
+    /// tx 0xd47ca9ff33d59af1ff6dd0f2894f749d6799d5ed12f717f667c9c44bb70a2d2b, block 25868888.
+    function test_morphoBlue_liquidate_realTx() public pure {
+        EvmV1Decoder.LogEntry memory log = _log(
+            _topics4(
+                MorphoBlueParser.LIQUIDATE_TOPIC0,
+                0x328aadb887d060f3d03727f6baaee56ed88570a97dc2ab49b2064a9410ccfd06,
+                0x00000000000000000000000060dc26aeebdcced6ce968422fb1dffae8e74b5db,
+                0x000000000000000000000000860b7abd16672b33bab84679526227adb283ed8f
+            ),
+            hex"0000000000000000000000000000000000000000000002b8a873a8aba3486873"
+            hex"000000000000000000000000000000000000000028b842ba145c7d4f8a3ea059"
+            hex"000000000000000000000000000000000000000000000459958463d1ca380000"
+            hex"0000000000000000000000000000000000000000000000000000000000000000"
+            hex"0000000000000000000000000000000000000000000000000000000000000000"
+        );
+
+        MorphoBlueParser.Liquidate memory l = MorphoBlueParser.parseLiquidate(log);
+        assertEq(l.marketId, 0x328aadb887d060f3d03727f6baaee56ed88570a97dc2ab49b2064a9410ccfd06);
+        assertEq(l.caller, 0x60Dc26aeEBdCCED6cE968422FB1DFfae8E74b5dB);
+        assertEq(l.borrower, 0x860b7Abd16672B33Bab84679526227adb283ed8f);
+        assertEq(l.repaidAssets, 0x2b8a873a8aba3486873);
+        assertEq(l.repaidShares, 0x28b842ba145c7d4f8a3ea059);
+        assertEq(l.seizedAssets, 0x459958463d1ca380000);
+        assertEq(l.badDebtAssets, 0);
+        assertEq(l.badDebtShares, 0);
     }
 }
