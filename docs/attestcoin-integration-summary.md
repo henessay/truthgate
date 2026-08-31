@@ -55,6 +55,31 @@ The bureau's parser library extends past the contracts wired into the live Sepol
 - **Spark (SparkLend)** (mainnet, verified tier; no Sepolia deployment exists): Aave v3 fork, both events verified **byte-identical** against live mainnet logs (pool identity checked on-chain: `getMarketId() == "Spark Protocol"`). Registers with `AaveV3Parser` — no code of its own.
 - **Morpho Blue** (mainnet singleton + official Sepolia deployment, both verified tier): `Repay` → DISCIPLINE, `Liquidate` → NEGATIVE, via `MorphoBlueParser`. The DISCIPLINE subject is `onBehalf` — the borrower whose debt shrinks — not the paying `caller`; all amounts are loan-token denominated per market (heterogeneous), so per the bureau's design rule they are emit-only and never enter scoring arithmetic.
 - **Compound v3 (Comet)** (mainnet cUSDCv3, verified tier; no Ethereum testnet deployment exists): `AbsorbDebt` → NEGATIVE via `CompoundV3Parser` — 3-topic shape (only `absorber` and `borrower` indexed), unlike the 4-topic Aave/Morpho liquidations. **NEGATIVE only — see below for why Comet DISCIPLINE is unprovable.**
+- **Rocket Pool** (mainnet, verified tier; primary testnet is Hoodi, not Sepolia): `DepositReceived` → CAPITAL via `RocketPoolParser`. The deposit-pool address is resolved live from `RocketStorage` (Rocket Pool contracts are upgradeable) and the amount is native ETH (`msg.value`) — the one external CAPITAL source homogeneous with vault deposits, so it enters the capped CAPITAL formula directly.
+- **EigenLayer** (mainnet StrategyManager v1.13.0 + official Sepolia deployment, both verified tier): `Deposit` → CAPITAL via `EigenLayerParser`. The **current** slashing-era layout has *nothing indexed* — one topic, the staker read from data; the pre-slashing 4-parameter layout produced zero logs in a 100k-block scan of the live proxy and is deliberately unsupported. This drift between the remembered interface and the live contract is exactly why every parser pins against real mainnet emissions. Shares are heterogeneous LST strategy units → flat per-event credit, never share-proportional.
+
+### The joint CAPITAL cap (double-counting guard)
+
+All CAPITAL sources — vault deposits, Rocket Pool deposits, EigenLayer restakes — draw from **one shared accumulator** (`depositScoreOf`) against the single `DEPOSIT_SCORE_CAP`. This is deliberate: the same capital moved between protocols, or an LST restaked on top of an existing stake, is counted **once**, not once per protocol that attests it. A borrower who filled the cap with vault deposits gains exactly zero from subsequently proven Rocket Pool or EigenLayer deposits (the events still verify and are emitted for history). Locked in by `test_jointCapitalCap_capitalCountedOnce`.
+
+### Demo market on Morpho Blue Sepolia
+
+For a real external-protocol `Repay` in the live pipeline, TruthGate creates its own permissionless Morpho Blue market on Sepolia (loan token: tUSDC, collateral: DAI, IRM `address(0)` = zero interest, an enabled LLTV). Its `FixedPriceOracle` serves **Morpho's internal LLTV mechanics only** — the health check at borrow time inside the demo market; the bureau records the `Repay` event as fact, amounts emit-only — the no-hardcoded-prices rule applies to scoring, not to the demo market's internal plumbing.
+
+### Coverage table
+
+Bureau parsers cover protocols totaling **≈ $40.2B TVL** (per-protocol figures from DefiLlama, 2026-08-31). Every implemented parser is pinned against a real historical transaction of the live, verified mainnet contract (`MainnetParity.t.sol`, tx hashes in test comments); machine-readable source: `docs/protocol-registry.json`.
+
+| Protocol | Events | Category | Tier | Parser | TVL |
+|---|---|---|---|---|---|
+| Aave v3 | `Repay`, `LiquidationCall` | DISCIPLINE, NEGATIVE | mainnet verified + **Sepolia live** (LiquidationCall in the pipeline today; Repay action v4-pending) | `AaveV3Parser` | $17.2B |
+| Spark (SparkLend) | `Repay`, `LiquidationCall` | DISCIPLINE, NEGATIVE | mainnet verified (fork byte-identical — same parser) | `AaveV3Parser` | $4.4B |
+| Morpho Blue | `Repay`, `Liquidate` | DISCIPLINE, NEGATIVE | mainnet verified + official Sepolia deployment (live-pipeline candidate via the demo market) | `MorphoBlueParser` | $9.5B |
+| Compound v3 (Comet) | `AbsorbDebt` | NEGATIVE only (DISCIPLINE unprovable — see below) | mainnet verified | `CompoundV3Parser` | $1.4B |
+| Rocket Pool | `DepositReceived` | CAPITAL | mainnet verified (address resolved via RocketStorage) | `RocketPoolParser` | $1.3B |
+| EigenLayer | `Deposit` (current 3-param layout) | CAPITAL (flat, joint cap) | mainnet verified + official Sepolia deployment | `EigenLayerParser` | $6.4B |
+| Maker / Sky | — | — | roadmap: LogNote/DSNote anonymous-event model needs a calldata-decoding adapter, not a log parser | — | — |
+| Euler v2, Fluid, Curve (crvUSD/LlamaLend) | — | — | roadmap: registered targets; layouts to be live-verified before implementation | — | — |
 
 ### Why DISCIPLINE from Compound v3 is unprovable (a limitation of event-based proofs, stated openly)
 

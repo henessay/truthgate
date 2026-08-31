@@ -147,6 +147,91 @@
           "evidenceTx": "0x84ba430544c34243d5ca55a8e6724d1992b4287dd7e798db38641c0d462339fd"
         }
       ]
+    },
+    {
+      "id": "rocket-pool",
+      "name": "Rocket Pool",
+      "parser": "RocketPoolParser",
+      "parserNote": "amount is native ETH (msg.value) — the one external CAPITAL source homogeneous with vault deposits, so it enters the capped CAPITAL formula directly; draws from the JOINT capital cap (capital counted once across sources)",
+      "deployments": [
+        {
+          "chain": "ethereum",
+          "chainId": 1,
+          "address": "0xCE15294273CFb9D9b628F4D61636623decDF4fdC",
+          "tier": "verified",
+          "identity": "resolved live from RocketStorage 0x1d8f8f00cfa6758d7bE78336684788Fb0ee0Fa46 via getAddress(keccak256(\"contract.address\" || \"rocketDepositPool\")) (2026-08-31); Rocket Pool contracts are upgradeable — re-resolve after protocol upgrades. Primary testnet is Hoodi, not Sepolia — no testnet deployment registered"
+        }
+      ],
+      "events": [
+        {
+          "name": "DepositReceived",
+          "topic0": "0x7aa1a8eb998c779420645fc14513bf058edb347d95c2fc2e6845bdc22f888631",
+          "category": "CAPITAL",
+          "subject": "from (topics[1])",
+          "parserStatus": "implemented + mainnet-pinned; CreditCore action ScoreRocketPoolDeposit (v4-pending)",
+          "evidenceTx": "0x9dfd47079af6db90132016b8689883a2486d1d2916b043ff7f75b7a538946868"
+        }
+      ]
+    },
+    {
+      "id": "eigenlayer",
+      "name": "EigenLayer",
+      "parser": "EigenLayerParser",
+      "parserNote": "CURRENT slashing-era layout: Deposit(staker, strategy, shares) with NOTHING indexed — one topic, subject read from data. The pre-slashing 4-parameter layout (with a token field) produced zero logs in a 100k-block scan and is deliberately unsupported. Shares are heterogeneous LST strategy units -> flat per-event CAPITAL credit drawing from the JOINT capital cap: restaked LSTs cannot double-count capital already scored elsewhere",
+      "deployments": [
+        {
+          "chain": "ethereum",
+          "chainId": 1,
+          "address": "0x858646372CC42E1A627fcE94aa7A7033e7CF075A",
+          "tier": "verified",
+          "identity": "StrategyManager proxy from the canonical Layr-Labs/eigenlayer-contracts deployments table (v1.13.0); 3-param Deposit layout confirmed against live emissions (2026-08-31)"
+        },
+        {
+          "chain": "sepolia",
+          "chainId": 11155111,
+          "address": "0x2E3D6c0744b10eb0A4e6F679F71554a39Ec47a5D",
+          "tier": "verified",
+          "identity": "official Sepolia StrategyManager (v1.12.1) per the canonical deployments table; code present on-chain — live-pipeline candidate (needs a whitelisted Sepolia strategy + LST to produce a real Deposit)"
+        }
+      ],
+      "events": [
+        {
+          "name": "Deposit",
+          "topic0": "0x5548c837ab068cf56a2c2479df0882a4922fd203edb7517321831d95078c5f62",
+          "category": "CAPITAL",
+          "subject": "staker (data word 0 — NOT indexed)",
+          "parserStatus": "implemented + mainnet-pinned; CreditCore action ScoreEigenDeposit (v4-pending)",
+          "evidenceTx": "0xb438dfe8b88760e432545aaba7ca8630f2b1cede772ed0c7afc4487784369db4"
+        }
+      ]
+    },
+    {
+      "id": "maker-sky",
+      "name": "Maker / Sky",
+      "parser": null,
+      "tier": "roadmap",
+      "roadmapNote": "LogNote/DSNote event model: core CDP operations emit anonymous events carrying raw calldata rather than typed indexed fields, so repay/liquidation semantics need a dedicated calldata-decoding adapter, not a log-layout parser. Documented as adapter roadmap; no addresses registered until the adapter design is verified against live logs."
+    },
+    {
+      "id": "euler-v2",
+      "name": "Euler v2",
+      "parser": null,
+      "tier": "roadmap",
+      "roadmapNote": "registered target; parser not implemented — event layouts to be live-verified before implementation per the bureau's pinning rule."
+    },
+    {
+      "id": "fluid",
+      "name": "Fluid (Instadapp)",
+      "parser": null,
+      "tier": "roadmap",
+      "roadmapNote": "registered target; parser not implemented — event layouts to be live-verified before implementation per the bureau's pinning rule."
+    },
+    {
+      "id": "curve-llamalend",
+      "name": "Curve (crvUSD / LlamaLend)",
+      "parser": null,
+      "tier": "roadmap",
+      "roadmapNote": "registered target; parser not implemented — event layouts to be live-verified before implementation per the bureau's pinning rule."
     }
   ]
 }
