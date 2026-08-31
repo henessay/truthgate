@@ -109,3 +109,18 @@ repaid) lives on the historical v2 core.
 
 Sepolia → CC3 attestation lag in the run: ~8 minutes (matches Attestcoin's stated design — attestation
 deliberately trails the source head). A proof for an already-attested block is served by the prover from cache within seconds.
+
+## Real external-protocol Repay on Morpho Blue Sepolia (2026-08-31, pending v4 pipeline)
+
+TruthGate's own permissionless market on the official Morpho Blue Sepolia singleton
+`0xd011EE229E7459ba1ddd22631eF7bF528d424A14` — a REAL external protocol producing the
+DISCIPLINE event, replacing the simulator for this category once CreditCore v4 (action
+`ScoreMorphoRepay`) is deployed. Proofs are of history: the transaction below replays
+through the pipeline at any time after v4.
+
+| Step | Tx | Notes |
+|---|---|---|
+| FixedPriceOracle deployed (`0x62a87bA957f07E70877EEB741eD5e0441Acc15b5`, price 1e24) | `0xf071f8e24b4b97764ab26c442323004cb6969cf3041b3b9521f21b1203f9a5d8` | serves Morpho's internal LLTV mechanics only — the bureau records the Repay event as fact, amounts emit-only |
+| createMarket (tUSDC loan / DAI collateral, IRM `address(0)` = zero interest, LLTV 77%) | `0x5fb6f1ae95791ff73ec701ff4745ac67e5df6ee945c9c004b0825e999fa15a36` | marketId `0x8db3b66308de899b5dd81c0a9de5b423fbc8fe287e2f7d72e3b1e73250eaf722` = keccak256(abi.encode(params)), verified |
+| supply 100 tUSDC liquidity | `0xca3dc07fe6d2e0d36c63966d843c60ba4efed630b0123e567c41a6af96b64492` | market state verified: totalSupplyAssets 100e6 |
+| faucet DAI → supplyCollateral 100 → borrow 50 tUSDC → **repay by shares** (`contracts/script/morpho-demo.sh`) | **`0xf232bbd79c02655716e8f2ff983f7d67d7987b6be49cac9fb03586669396ee17`** | **the pending DISCIPLINE proof.** Receipt verified: status 1, block 11604843; `Repay` from the singleton with our pinned topic0, marketId `0x8db3..f722`, caller = onBehalf = borrower `0x025A..a3d0`, assets exactly 50e6, shares 5e13 — exact full close (zero-interest market), zero reverts in the whole cycle |
