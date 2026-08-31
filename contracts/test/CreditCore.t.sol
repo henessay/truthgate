@@ -111,6 +111,42 @@ contract CreditCoreTest is Test {
         return _encodeTx(1, logs);
     }
 
+    bytes32 constant RP_DEPOSIT_SIG = keccak256("DepositReceived(address,uint256,uint256)");
+    bytes32 constant EIGEN_DEPOSIT_SIG = keccak256("Deposit(address,address,uint256)");
+    address constant ROCKET_POOL_SOURCE = address(0x40C4E7);
+    address constant EIGEN_SOURCE = address(0xE16E4);
+
+    /// @dev Rocket Pool DepositReceived layout: 2 topics (from indexed),
+    /// data = abi.encode(amount, time); amount is native ETH (msg.value).
+    function _rocketDepositTx(address emitter, address from, uint256 amount)
+        internal
+        view
+        returns (bytes memory)
+    {
+        LogTuple[] memory logs = new LogTuple[](1);
+        logs[0].address_ = emitter;
+        logs[0].topics = new bytes32[](2);
+        logs[0].topics[0] = RP_DEPOSIT_SIG;
+        logs[0].topics[1] = bytes32(uint256(uint160(from)));
+        logs[0].data = abi.encode(amount, uint256(1_777_000_000));
+        return _encodeTx(1, logs);
+    }
+
+    /// @dev EigenLayer Deposit layout (current, slashing-era): ONE topic — nothing
+    /// indexed — data = abi.encode(staker, strategy, shares).
+    function _eigenDepositTx(address emitter, address staker, uint256 shares)
+        internal
+        view
+        returns (bytes memory)
+    {
+        LogTuple[] memory logs = new LogTuple[](1);
+        logs[0].address_ = emitter;
+        logs[0].topics = new bytes32[](1);
+        logs[0].topics[0] = EIGEN_DEPOSIT_SIG;
+        logs[0].data = abi.encode(staker, address(0x5717), shares);
+        return _encodeTx(1, logs);
+    }
+
     function _execute(uint8 action, uint64 height, bytes memory encodedTx) internal returns (bool) {
         return _executeOn(core, action, height, encodedTx);
     }
@@ -611,5 +647,66 @@ contract CreditCoreTest is Test {
         vm.prank(alice);
         pool.unstake(5 ether);
         assertEq(alice.balance - before, 5 ether);
+    }
+
+    // ---------- joint CAPITAL cap (double-counting guard) ----------
+
+    function _registerCapitalSources() internal {
+        core.registerRocketDepositPool(ROCKET_POOL_SOURCE);
+        core.registerEigenStrategyManager(EIGEN_SOURCE);
+    }
+
+    /// @notice The guard itself: every CAPITAL source draws from ONE shared cap.
+    /// Capital proven through the vault, then Rocket Pool, then EigenLayer is
+    /// counted once — the accumulated capital score can never exceed
+    /// DEPOSIT_SCORE_CAP no matter how many protocols attest it.
+    function test_jointCapitalCap_capitalCountedOnce() public {
+        _registerCapitalSources();
+
+        // Vault deposits fill 1.95 of the 2.0 cap
+        _proveDeposit(1.95 ether, 100);
+        assertEq(_ethScore(bob), 1.95 ether);
+        assertEq(core.depositScoreOf(bob), 1.95 ether);
+
+        // A proven 0.5 ETH Rocket Pool deposit only fills the remaining 0.05 room
+        _execute(3, 101, _rocketDepositTx(ROCKET_POOL_SOURCE, bob, 0.5 ether));
+        assertEq(_ethScore(bob), 2 ether);
+        assertEq(core.depositScoreOf(bob), 2 ether);
+
+        // A proven EigenLayer restake (huge share count) adds exactly zero:
+        // that capital is already counted — restaked LSTs share the joint cap
+        _execute(4, 102, _eigenDepositTx(EIGEN_SOURCE, bob, 1e24));
+        assertEq(_ethScore(bob), 2 ether);
+        assertEq(core.depositScoreOf(bob), 2 ether);
+
+        // And another Rocket Pool deposit is also zero — the cap is global,
+        // not per-source
+        _execute(3, 103, _rocketDepositTx(ROCKET_POOL_SOURCE, bob, 1 ether));
+        assertEq(_ethScore(bob), 2 ether);
+    }
+
+    /// @notice EigenLayer credit is flat per proven event, independent of the
+    /// share amount (strategy shares are heterogeneous LST units — 1 wei of
+    /// shares and 1e24 shares score identically); Rocket Pool credit is
+    /// amount-based (native ETH is homogeneous).
+    function test_eigenFlatVsRocketAmountBased() public {
+        _registerCapitalSources();
+
+        _execute(4, 200, _eigenDepositTx(EIGEN_SOURCE, bob, 1)); // dust shares
+        assertEq(_ethScore(bob), 0.1 ether);
+        _execute(4, 201, _eigenDepositTx(EIGEN_SOURCE, bob, 1e24)); // whale shares
+        assertEq(_ethScore(bob), 0.2 ether); // same flat +0.1
+
+        _execute(3, 202, _rocketDepositTx(ROCKET_POOL_SOURCE, bob, 0.3 ether));
+        assertEq(_ethScore(bob), 0.5 ether); // amount-based +0.3
+        assertEq(core.depositScoreOf(bob), 0.5 ether); // one shared accumulator
+    }
+
+    function test_capitalActions_requireRegisteredSource() public {
+        vm.expectRevert("rocket pool source not registered");
+        _execute(3, 300, _rocketDepositTx(ROCKET_POOL_SOURCE, bob, 1 ether));
+
+        vm.expectRevert("eigen source not registered");
+        _execute(4, 301, _eigenDepositTx(EIGEN_SOURCE, bob, 1e18));
     }
 }

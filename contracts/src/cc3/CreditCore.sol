@@ -4,6 +4,8 @@ pragma solidity ^0.8.24;
 import {EvmV1Decoder} from "@gluwa/usc-contracts/contracts/decoding/EvmV1Decoder.sol";
 import {TruthGateBase} from "./TruthGateBase.sol";
 import {LPPool} from "./LPPool.sol";
+import {RocketPoolParser} from "./parsers/RocketPoolParser.sol";
+import {EigenLayerParser} from "./parsers/EigenLayerParser.sol";
 
 /// @title CreditCore
 /// @notice TruthGate credit core on CC3. Scoring grows ONLY from proven Sepolia
@@ -15,7 +17,9 @@ contract CreditCore is TruthGateBase {
     enum ScoreActions {
         ScoreDeposit, // 0: deposit into the vault on Sepolia
         ScoreRepayment, // 1: loan repayment on Sepolia
-        ScoreLiquidation // 2: borrower liquidated on Sepolia (negative signal)
+        ScoreLiquidation, // 2: borrower liquidated on Sepolia (negative signal)
+        ScoreRocketPoolDeposit, // 3: proven Rocket Pool ETH deposit (CAPITAL)
+        ScoreEigenDeposit // 4: proven EigenLayer restake (CAPITAL, flat per event)
     }
     error InvalidAction(uint8 action);
 
@@ -91,6 +95,12 @@ contract CreditCore is TruthGateBase {
     /// 1 ETH deposits; above the cap a deposit is still verified and emits the event,
     /// but does not grow the score.
     uint256 public constant DEPOSIT_SCORE_CAP = 2 ether;
+    /// @notice Flat CAPITAL credit per proven EigenLayer deposit. Flat, not
+    /// share-proportional: strategy shares are units of arbitrary LSTs —
+    /// heterogeneous across strategies and not 1:1 with ETH — so per the bureau's
+    /// design rule the amount never enters the formula (it is emitted only).
+    /// Draws from the same joint CAPITAL cap as ETH deposits (see depositScoreOf).
+    uint256 public constant EIGEN_DEPOSIT_FLAT_SCORE = 0.1 ether;
     /// @notice Flat bonus per proven repayment act on Sepolia: the frequency of
     /// payment discipline carries its own weight, not just the volume.
     uint256 public constant FLAT_REPAYMENT_BONUS = 0.1 ether;
@@ -155,12 +165,20 @@ contract CreditCore is TruthGateBase {
 
     address public vaultOnSepolia; // source of FundsDeposited
     address public loanBookOnSepolia; // source of LoanRepaidOnEth
+    // CAPITAL sources beyond the vault (owner-registered when their chain is
+    // attested; unset ⇒ the action reverts):
+    address public rocketDepositPoolSource; // source of DepositReceived (upgradeable via RocketStorage)
+    address public eigenStrategyManagerSource; // source of EigenLayer Deposit
     address public repaymentBridge; // the only caller allowed to invoke path B
 
     mapping(uint256 => Loan) public loans;
     mapping(address => Borrower) public borrowers;
     mapping(address => uint256[]) internal _openLoans;
-    /// @notice How much ethScore the borrower has already earned via deposits (for DEPOSIT_SCORE_CAP).
+    /// @notice JOINT capital accumulator: how much ethScore the address has earned
+    /// across ALL proven CAPITAL sources (vault deposits, Rocket Pool deposits,
+    /// EigenLayer restakes), for the shared DEPOSIT_SCORE_CAP. One cap on purpose —
+    /// the double-counting guard: the same capital moved between protocols (or an
+    /// LST restaked on top of a stake) is counted once, not once per protocol.
     mapping(address => uint256) public depositScoreOf;
 
     uint256 public nextLoanId = 1;
@@ -179,6 +197,8 @@ contract CreditCore is TruthGateBase {
     event LoanExpired(uint256 indexed loanId);
     event VaultOnSepoliaRegistered(address indexed vault);
     event LoanBookOnSepoliaRegistered(address indexed loanBook);
+    event RocketDepositPoolRegistered(address indexed depositPool);
+    event EigenStrategyManagerRegistered(address indexed strategyManager);
     event RepaymentBridgeSet(address indexed bridge);
 
     modifier onlyRepaymentBridge() {
@@ -213,6 +233,18 @@ contract CreditCore is TruthGateBase {
         emit LoanBookOnSepoliaRegistered(loanBook);
     }
 
+    function registerRocketDepositPool(address depositPool) external onlyOwner {
+        require(depositPool != address(0), "zero deposit pool");
+        rocketDepositPoolSource = depositPool;
+        emit RocketDepositPoolRegistered(depositPool);
+    }
+
+    function registerEigenStrategyManager(address strategyManager) external onlyOwner {
+        require(strategyManager != address(0), "zero strategy manager");
+        eigenStrategyManagerSource = strategyManager;
+        emit EigenStrategyManagerRegistered(strategyManager);
+    }
+
     function setRepaymentBridge(address bridge) external onlyOwner {
         require(bridge != address(0), "zero bridge");
         repaymentBridge = bridge;
@@ -226,7 +258,9 @@ contract CreditCore is TruthGateBase {
     // by RepaymentBridge), so all actions here are scoring actions.
     function _isFreshnessEnforced(uint8 action) internal pure override returns (bool) {
         return action == uint8(ScoreActions.ScoreDeposit) || action == uint8(ScoreActions.ScoreRepayment)
-            || action == uint8(ScoreActions.ScoreLiquidation);
+            || action == uint8(ScoreActions.ScoreLiquidation)
+            || action == uint8(ScoreActions.ScoreRocketPoolDeposit)
+            || action == uint8(ScoreActions.ScoreEigenDeposit);
     }
 
     function _processAndEmitEvent(uint8 action, bytes32 queryId, uint64, bytes memory encodedTransaction)
@@ -240,9 +274,31 @@ contract CreditCore is TruthGateBase {
             _scoreRepayments(queryId, encodedTransaction);
         } else if (action == uint8(ScoreActions.ScoreLiquidation)) {
             _scoreLiquidations(queryId, encodedTransaction);
+        } else if (action == uint8(ScoreActions.ScoreRocketPoolDeposit)) {
+            _scoreRocketPoolDeposits(queryId, encodedTransaction);
+        } else if (action == uint8(ScoreActions.ScoreEigenDeposit)) {
+            _scoreEigenDeposits(queryId, encodedTransaction);
         } else {
             revert InvalidAction(action);
         }
+    }
+
+    /// @dev Shared CAPITAL crediting with the JOINT cap (the double-counting
+    /// guard): every capital source draws from the same depositScoreOf
+    /// accumulator against DEPOSIT_SCORE_CAP, so capital is counted once no
+    /// matter how many protocols it is proven through. Above the cap — delta 0,
+    /// but the event is still emitted (the deposit is verified and visible in
+    /// history, as with the vault-deposit cap).
+    function _creditCapital(address subject, uint256 amount, bytes32 queryId) internal {
+        uint256 used = depositScoreOf[subject];
+        uint256 delta = 0;
+        if (used < DEPOSIT_SCORE_CAP) {
+            uint256 room = DEPOSIT_SCORE_CAP - used;
+            delta = amount > room ? room : amount;
+            depositScoreOf[subject] = used + delta;
+            borrowers[subject].ethScore += delta;
+        }
+        emit EthScoreIncreased(subject, delta, queryId);
     }
 
     function _scoreDeposits(bytes32 queryId, bytes memory encodedTransaction) internal {
@@ -261,17 +317,41 @@ contract CreditCore is TruthGateBase {
             (uint256 amount, ) = abi.decode(logs[i].data, (uint256, uint256));
 
             // Deposit contribution to the score is capped: protection against score
-            // farming by circulating the same funds. Above the cap — delta 0, but the
-            // event is still emitted (the deposit is verified and visible in history).
-            uint256 used = depositScoreOf[depositor];
-            uint256 delta = 0;
-            if (used < DEPOSIT_SCORE_CAP) {
-                uint256 room = DEPOSIT_SCORE_CAP - used;
-                delta = amount > room ? room : amount;
-                depositScoreOf[depositor] = used + delta;
-                borrowers[depositor].ethScore += delta;
-            }
-            emit EthScoreIncreased(depositor, delta, queryId);
+            // farming by circulating the same funds. The cap is JOINT across all
+            // CAPITAL sources — see _creditCapital.
+            _creditCapital(depositor, amount, queryId);
+        }
+    }
+
+    /// @dev CAPITAL from a proven Rocket Pool deposit. The amount is native ETH
+    /// (msg.value of RocketDepositPool.deposit) — the one external CAPITAL source
+    /// homogeneous with vault deposits, so it enters the formula directly, drawing
+    /// from the joint cap.
+    function _scoreRocketPoolDeposits(bytes32 queryId, bytes memory encodedTransaction) internal {
+        require(rocketDepositPoolSource != address(0), "rocket pool source not registered");
+        EvmV1Decoder.LogEntry[] memory logs = _validateAndExtractLogs(
+            encodedTransaction, RocketPoolParser.DEPOSIT_RECEIVED_TOPIC0, rocketDepositPoolSource
+        );
+
+        for (uint256 i; i < logs.length; i++) {
+            RocketPoolParser.DepositReceived memory d = RocketPoolParser.parseDepositReceived(logs[i]);
+            _creditCapital(d.from, d.amount, queryId);
+        }
+    }
+
+    /// @dev CAPITAL from a proven EigenLayer restake. FLAT per event
+    /// (EIGEN_DEPOSIT_FLAT_SCORE): strategy shares are heterogeneous LST units and
+    /// never enter the formula. Draws from the joint cap — restaked LSTs cannot
+    /// double-count capital already scored through other sources.
+    function _scoreEigenDeposits(bytes32 queryId, bytes memory encodedTransaction) internal {
+        require(eigenStrategyManagerSource != address(0), "eigen source not registered");
+        EvmV1Decoder.LogEntry[] memory logs = _validateAndExtractLogs(
+            encodedTransaction, EigenLayerParser.DEPOSIT_TOPIC0, eigenStrategyManagerSource
+        );
+
+        for (uint256 i; i < logs.length; i++) {
+            EigenLayerParser.Deposit memory d = EigenLayerParser.parseDeposit(logs[i]);
+            _creditCapital(d.staker, EIGEN_DEPOSIT_FLAT_SCORE, queryId);
         }
     }
 
