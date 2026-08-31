@@ -7,6 +7,8 @@ import {CreditCore} from "../src/cc3/CreditCore.sol";
 import {AaveV3Parser} from "../src/cc3/parsers/AaveV3Parser.sol";
 import {MorphoBlueParser} from "../src/cc3/parsers/MorphoBlueParser.sol";
 import {CompoundV3Parser} from "../src/cc3/parsers/CompoundV3Parser.sol";
+import {RocketPoolParser} from "../src/cc3/parsers/RocketPoolParser.sol";
+import {EigenLayerParser} from "../src/cc3/parsers/EigenLayerParser.sol";
 
 /// @notice Pins every bureau parser against REAL historical transactions of the
 /// live, verified mainnet contracts — raw topics and data bytes copied verbatim
@@ -27,6 +29,13 @@ import {CompoundV3Parser} from "../src/cc3/parsers/CompoundV3Parser.sol";
 ///    == canonical USDC, symbol() == "cUSDCv3"; declaration from the canonical
 ///    compound-finance/comet CometMainInterface):
 ///    0xc3d688B66703497DAA19211EEdff47f25384cdc3
+///  - Rocket Pool deposit pool (mainnet, resolved live from RocketStorage
+///    0x1d8f8f00cfa6758d7bE78336684788Fb0ee0Fa46 via getAddress(keccak256(
+///    "contract.address" ‖ "rocketDepositPool")); upgradeable — re-resolve after
+///    protocol upgrades): 0xCE15294273CFb9D9b628F4D61636623decDF4fdC
+///  - EigenLayer StrategyManager proxy (mainnet, address from the canonical
+///    Layr-Labs/eigenlayer-contracts deployments table, v1.13.0):
+///    0x858646372CC42E1A627fcE94aa7A7033e7CF075A
 contract MainnetParityTest is Test {
     // Signature constants only; logic never called (stub constructor args).
     CreditCore core;
@@ -263,5 +272,52 @@ contract MainnetParityTest is Test {
         assertEq(a.borrower, 0x6aaa5Ea1953418cd8eAc45B8fDF179E0A783FA7C);
         assertEq(a.basePaidOut, 0xf35ed61d5); // 6-dec USDC raw units
         assertEq(a.usdValue, 0x5f08870a094); // 8-dec USD
+    }
+
+    // ---------- Rocket Pool (deposit pool) ----------
+
+    /// @dev Real Rocket Pool mainnet DepositReceived: B960..3A57 deposits 0.06 ETH.
+    /// Amount is native msg.value — the one CAPITAL source homogeneous with ETH.
+    /// tx 0x9dfd47079af6db90132016b8689883a2486d1d2916b043ff7f75b7a538946868, block 25869360.
+    function test_rocketPoolMainnet_depositReceived_realTx() public pure {
+        bytes32[] memory topics = new bytes32[](2);
+        topics[0] = RocketPoolParser.DEPOSIT_RECEIVED_TOPIC0;
+        topics[1] = 0x000000000000000000000000b9600648ef4d9ab9d281207069794abd2f273a57;
+
+        EvmV1Decoder.LogEntry memory log = _log(
+            topics,
+            hex"00000000000000000000000000000000000000000000000000d529ae9e860000"
+            hex"000000000000000000000000000000000000000000000000000000006a945dc3"
+        );
+
+        RocketPoolParser.DepositReceived memory d = RocketPoolParser.parseDepositReceived(log);
+        assertEq(d.from, 0xB9600648ef4d9Ab9d281207069794abD2F273A57);
+        assertEq(d.amount, 0.06 ether); // native ETH wei
+        assertEq(d.time, 0x6a945dc3); // block.timestamp at deposit
+    }
+
+    // ---------- EigenLayer (StrategyManager) ----------
+
+    /// @dev Real EigenLayer mainnet Deposit, CURRENT slashing-era layout: staker
+    /// F3B0..9c3f deposits into strategy 57ba..4c02. ONE topic — nothing indexed,
+    /// all fields in data; the pre-slashing 4-parameter layout produced zero logs
+    /// in a 100k-block scan of the same proxy, which is why parsers pin against
+    /// live emissions rather than interfaces from memory.
+    /// tx 0xb438dfe8b88760e432545aaba7ca8630f2b1cede772ed0c7afc4487784369db4, block 25864195.
+    function test_eigenLayerMainnet_deposit_realTx() public pure {
+        bytes32[] memory topics = new bytes32[](1);
+        topics[0] = EigenLayerParser.DEPOSIT_TOPIC0;
+
+        EvmV1Decoder.LogEntry memory log = _log(
+            topics,
+            hex"000000000000000000000000f3b060539f85eef842ee0fab61053a799de79c3f"
+            hex"00000000000000000000000057ba429517c3473b6d34ca9acd56c0e735b94c02"
+            hex"000000000000000000000000000000000000000000000000009fdf42f6e48000"
+        );
+
+        EigenLayerParser.Deposit memory d = EigenLayerParser.parseDeposit(log);
+        assertEq(d.staker, 0xF3B060539f85eef842ee0fab61053a799DE79c3f);
+        assertEq(d.strategy, 0x57ba429517c3473B6d34CA9aCd56c0e735b94c02);
+        assertEq(d.shares, 0x9fdf42f6e48000); // strategy-share units, emit-only
     }
 }
