@@ -122,6 +122,31 @@
           "evidenceTx": "0xd47ca9ff33d59af1ff6dd0f2894f749d6799d5ed12f717f667c9c44bb70a2d2b"
         }
       ]
+    },
+    {
+      "id": "compound-v3",
+      "name": "Compound v3 (Comet)",
+      "parser": "CompoundV3Parser",
+      "parserNote": "one proxy per market (cUSDCv3, cWETHv3, ...) — the event is identical on each instance; cUSDCv3 is the registered flagship. NEGATIVE only by design: Comet has no repayment event — repaying is supply() into a negative balance, emitting the same Supply event as a lender's deposit, and the meaning depends on pre-transaction account state which an inclusion proof cannot attest. DISCIPLINE from Comet is unprovable in this model, not merely unimplemented (see the writeup in attestcoin-integration-summary.md).",
+      "deployments": [
+        {
+          "chain": "ethereum",
+          "chainId": 1,
+          "address": "0xc3d688B66703497DAA19211EEdff47f25384cdc3",
+          "tier": "verified",
+          "identity": "cUSDCv3 proxy from the canonical comet repo deployments/mainnet/usdc/roots.json; on-chain: baseToken() == canonical USDC, symbol() == \"cUSDCv3\" (checked 2026-08-31); no Ethereum testnet deployment exists in the comet repo (mainnet + L2s only)"
+        }
+      ],
+      "events": [
+        {
+          "name": "AbsorbDebt",
+          "topic0": "0x1547a878dc89ad3c367b6338b4be6a65a5dd74fb77ae044da1e8747ef1f4f62f",
+          "category": "NEGATIVE",
+          "subject": "borrower (topics[2]) — note the 3-topic shape, unlike the 4-topic Aave/Morpho liquidations",
+          "parserStatus": "implemented + mainnet-pinned",
+          "evidenceTx": "0x84ba430544c34243d5ca55a8e6724d1992b4287dd7e798db38641c0d462339fd"
+        }
+      ]
     }
   ]
 }

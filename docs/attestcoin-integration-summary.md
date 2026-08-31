@@ -54,6 +54,15 @@ The bureau's parser library extends past the contracts wired into the live Sepol
 - **Aave v3** (mainnet, verified tier + Sepolia, live tier): `Repay` → DISCIPLINE, `LiquidationCall` → NEGATIVE. `AaveV3Parser` is the single implementation.
 - **Spark (SparkLend)** (mainnet, verified tier; no Sepolia deployment exists): Aave v3 fork, both events verified **byte-identical** against live mainnet logs (pool identity checked on-chain: `getMarketId() == "Spark Protocol"`). Registers with `AaveV3Parser` — no code of its own.
 - **Morpho Blue** (mainnet singleton + official Sepolia deployment, both verified tier): `Repay` → DISCIPLINE, `Liquidate` → NEGATIVE, via `MorphoBlueParser`. The DISCIPLINE subject is `onBehalf` — the borrower whose debt shrinks — not the paying `caller`; all amounts are loan-token denominated per market (heterogeneous), so per the bureau's design rule they are emit-only and never enter scoring arithmetic.
+- **Compound v3 (Comet)** (mainnet cUSDCv3, verified tier; no Ethereum testnet deployment exists): `AbsorbDebt` → NEGATIVE via `CompoundV3Parser` — 3-topic shape (only `absorber` and `borrower` indexed), unlike the 4-topic Aave/Morpho liquidations. **NEGATIVE only — see below for why Comet DISCIPLINE is unprovable.**
+
+### Why DISCIPLINE from Compound v3 is unprovable (a limitation of event-based proofs, stated openly)
+
+Comet has **no repayment event**. Repaying debt is `supply()` of the base asset into an account whose principal is negative; the contract emits the same `Supply(address indexed from, address indexed dst, uint256 amount)` whether the caller is a lender depositing or a borrower repaying. Which one it was is determined by the **sign of the account's principal before the transaction** — that is contract *state*, not transaction content.
+
+USC/Attestcoin proves a transaction's inclusion in a finalized block, and with it the transaction's receipt — its events. It does not (and cannot, in this model) attest arbitrary historical contract state at that block. So a proven `Supply` event cannot be trustlessly classified as a repayment: doing so would require trusting an off-chain archive-node lookup or an oracle for the pre-transaction balance sign — exactly the trust assumption the bureau exists to avoid. The failure mode of guessing would be score farming: any lender deposit would look like debt repayment and mint DISCIPLINE for free.
+
+`AbsorbDebt` has no such ambiguity — it fires only when the protocol absorbs an underwater account — so Comet contributes the NEGATIVE category only. This is a semantic property of Comet's event design (state-dependent event meaning), not a parser gap: protocols whose repayment is a first-class event (Aave v3, Spark, Morpho Blue) are DISCIPLINE-provable; Comet is documented as unprovable rather than left as silent non-coverage.
 
 ## v1 limitations
 

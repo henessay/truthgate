@@ -6,6 +6,7 @@ import {EvmV1Decoder} from "@gluwa/usc-contracts/contracts/decoding/EvmV1Decoder
 import {CreditCore} from "../src/cc3/CreditCore.sol";
 import {AaveV3Parser} from "../src/cc3/parsers/AaveV3Parser.sol";
 import {MorphoBlueParser} from "../src/cc3/parsers/MorphoBlueParser.sol";
+import {CompoundV3Parser} from "../src/cc3/parsers/CompoundV3Parser.sol";
 
 /// @notice Pins every bureau parser against REAL historical transactions of the
 /// live, verified mainnet contracts — raw topics and data bytes copied verbatim
@@ -22,6 +23,10 @@ import {MorphoBlueParser} from "../src/cc3/parsers/MorphoBlueParser.sol";
 ///    0xC13e21B648A5Ee794902342038FF3aDAB66BE987
 ///  - Morpho Blue singleton (mainnet, event declarations from the canonical
 ///    morpho-org/morpho-blue EventsLib): 0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb
+///  - Compound v3 cUSDCv3 proxy (mainnet, identity checked on-chain: baseToken()
+///    == canonical USDC, symbol() == "cUSDCv3"; declaration from the canonical
+///    compound-finance/comet CometMainInterface):
+///    0xc3d688B66703497DAA19211EEdff47f25384cdc3
 contract MainnetParityTest is Test {
     // Signature constants only; logic never called (stub constructor args).
     CreditCore core;
@@ -231,5 +236,32 @@ contract MainnetParityTest is Test {
         assertEq(l.seizedAssets, 0x459958463d1ca380000);
         assertEq(l.badDebtAssets, 0);
         assertEq(l.badDebtShares, 0);
+    }
+
+    // ---------- Compound v3 (Comet, cUSDCv3) ----------
+
+    /// @dev Real Comet mainnet AbsorbDebt: borrower 6aaa..FA7C absorbed by the
+    /// protocol via absorber f057..0004; ~65,283 USDC of base debt paid out,
+    /// Comet's own 8-dec USD estimate alongside. Note the 3-topic shape — Comet
+    /// indexes only absorber and borrower, unlike the 4-topic Aave/Morpho
+    /// liquidation events.
+    /// tx 0x84ba430544c34243d5ca55a8e6724d1992b4287dd7e798db38641c0d462339fd, block 25394044.
+    function test_compoundV3Mainnet_absorbDebt_realTx() public pure {
+        bytes32[] memory topics = new bytes32[](3);
+        topics[0] = CompoundV3Parser.ABSORB_DEBT_TOPIC0;
+        topics[1] = 0x000000000000000000000000f0570ec48d03171a80ff796dceadf0d385a00004;
+        topics[2] = 0x0000000000000000000000006aaa5ea1953418cd8eac45b8fdf179e0a783fa7c;
+
+        EvmV1Decoder.LogEntry memory log = _log(
+            topics,
+            hex"0000000000000000000000000000000000000000000000000000000f35ed61d5"
+            hex"000000000000000000000000000000000000000000000000000005f08870a094"
+        );
+
+        CompoundV3Parser.AbsorbDebt memory a = CompoundV3Parser.parseAbsorbDebt(log);
+        assertEq(a.absorber, 0xf0570Ec48d03171a80fF796dcEADF0D385a00004);
+        assertEq(a.borrower, 0x6aaa5Ea1953418cd8eAc45B8fDF179E0A783FA7C);
+        assertEq(a.basePaidOut, 0xf35ed61d5); // 6-dec USDC raw units
+        assertEq(a.usdValue, 0x5f08870a094); // 8-dec USD
     }
 }
