@@ -61,7 +61,9 @@ export function BorrowerScreen() {
             <div className="limit-breakdown num">
               <span>base {fmtCtc(overview.data.baseLimit)}</span>
               <span className="sep">+</span>
-              <span>ETH score {fmtCtc(overview.data.fromEthScore)}</span>
+              <span>capital {fmtCtc(overview.data.fromEthScore)}</span>
+              <span className="sep">+</span>
+              <span>discipline {fmtCtc(overview.data.fromDiscipline)}</span>
               <span className="sep">+</span>
               <span>local {fmtCtc(overview.data.fromLocalScore)}</span>
               {overview.data.liquidationPenalty > 0n && (
@@ -75,10 +77,17 @@ export function BorrowerScreen() {
             </div>
           )}
           {overview.data?.creditLimit === 0n && (
-            <div className="limit-breakdown">ethScore below minimum — prove a deposit on Sepolia</div>
+            <div className="limit-breakdown">score below minimum — prove a deposit on Sepolia</div>
+          )}
+          {overview.data && !overview.data.capitalGatePassed && overview.data.disciplineScore > 0n && (
+            <div className="limit-breakdown" style={{ color: 'var(--amber)' }}>
+              discipline {fmtCtc(overview.data.disciplineScore)} gated — prove capital ≥{' '}
+              {fmtCtc(overview.data.capitalGateThreshold)} ETH to unlock it
+            </div>
           )}
           <div className="attest-line">
-            ETH score {overview.data ? fmtCtc(overview.data.ethScore) : '…'} from{' '}
+            capital {overview.data ? fmtCtc(overview.data.ethScore) : '…'} · discipline{' '}
+            {overview.data ? fmtCtc(overview.data.disciplineScore) : '…'} from{' '}
             <b>{proofCount.data ?? '…'} proven Sepolia transactions</b> (USC block proof)
           </div>
         </div>

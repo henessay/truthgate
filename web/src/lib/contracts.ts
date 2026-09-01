@@ -48,15 +48,23 @@ export interface LoanView {
 
 export interface BorrowerOverview {
   address: string;
+  /** CAPITAL component (v4 split: proven deposits/staking only). */
   ethScore: bigint;
   localScore: bigint;
   openDebt: bigint;
   loansCompleted: bigint;
+  /** DISCIPLINE component (v4): proven repayments, sim + external protocols. */
+  disciplineScore: bigint;
+  /** Capital gate (v4 pivot fix 3): discipline counts only while proven capital ≥ threshold. */
+  capitalGatePassed: boolean;
+  capitalGateThreshold: bigint;
   creditLimit: bigint;
   available: bigint;
-  /* limit breakdown: BASE + slope×(ethScore−min) + K×localScore/1e18 */
+  /* limit breakdown: BASE + slope×(effective−min) + K×localScore/1e18 */
   baseLimit: bigint;
   fromEthScore: bigint;
+  /** Slope part attributable to (gated) discipline. */
+  fromDiscipline: bigint;
   fromLocalScore: bigint;
   /** Limit reduction from proven liquidations, clamped to the earned bonus (never eats the base). */
   liquidationPenalty: bigint;
@@ -85,10 +93,14 @@ export async function fetchPoolStats(): Promise<PoolStats> {
   return { balance, totalAssets, totalShares, sharePrice, outstandingPrincipal };
 }
 
-/** How many Sepolia transactions were proven into the borrower's score (EthScoreIncreased events). */
+/** How many Sepolia transactions were proven into the borrower's score
+ * (EthScoreIncreased = capital + DisciplineScoreIncreased = discipline, v4). */
 export async function fetchScoreProofCount(address: string): Promise<number> {
-  const logs = await creditCore.queryFilter(creditCore.filters.EthScoreIncreased(address), CC3_DEPLOY_BLOCK);
-  return logs.length;
+  const [capital, discipline] = await Promise.all([
+    creditCore.queryFilter(creditCore.filters.EthScoreIncreased(address), CC3_DEPLOY_BLOCK),
+    creditCore.queryFilter(creditCore.filters.DisciplineScoreIncreased(address), CC3_DEPLOY_BLOCK),
+  ]);
+  return capital.length + discipline.length;
 }
 
 export interface PathBDelivery {
@@ -112,10 +124,13 @@ export async function fetchPathBDeliveries(): Promise<Record<string, PathBDelive
 }
 
 export async function fetchBorrowerOverview(address: string): Promise<BorrowerOverview> {
-  const [borrowerRow, creditLimit, baseLimit, minEth, slopeNum, slopeDen, localK] =
+  const [borrowerRow, creditLimit, effectiveScore, depositScore, gateThreshold, baseLimit, minEth, slopeNum, slopeDen, localK] =
     await Promise.all([
       creditCore.borrowers(address) as Promise<bigint[]>,
       creditCore.creditLimit(address) as Promise<bigint>,
+      creditCore.effectiveScoreOf(address) as Promise<bigint>,
+      creditCore.depositScoreOf(address) as Promise<bigint>,
+      creditCore.CAPITAL_GATE_THRESHOLD() as Promise<bigint>,
       creditCore.BASE_LIMIT() as Promise<bigint>,
       creditCore.MIN_ETH_SCORE() as Promise<bigint>,
       creditCore.SCORE_SLOPE_NUM() as Promise<bigint>,
@@ -124,14 +139,21 @@ export async function fetchBorrowerOverview(address: string): Promise<BorrowerOv
     ]);
 
   const [ethScore, localScore, openDebt, loansCompleted] = borrowerRow;
-  // 5th field appended in CreditCore v3 — tolerate a pre-liquidation ABI/deployment
+  // 5th/6th fields appended in v3/v4 — tolerate an older ABI/deployment
   const rawPenalty = borrowerRow[4] ?? 0n;
+  const disciplineScore = borrowerRow[5] ?? 0n;
+  const capitalGatePassed = depositScore >= gateThreshold;
 
+  // Slope decomposition mirrors creditLimit(): the total slope bonus runs over the
+  // GATED effective score; the capital part is what ethScore alone would earn,
+  // the discipline part is the gated remainder
+  const totalSlope = effectiveScore >= minEth ? ((effectiveScore - minEth) * slopeNum) / slopeDen : 0n;
   const fromEthScore = ethScore >= minEth ? ((ethScore - minEth) * slopeNum) / slopeDen : 0n;
+  const fromDiscipline = totalSlope > fromEthScore ? totalSlope - fromEthScore : 0n;
   // localScore is stored in 1e18 units (1e18 = one score unit = +LOCAL_SCORE_K to the limit)
   const fromLocalScore = (localScore * localK) / 10n ** 18n;
   // Mirror the on-chain clamp: the penalty burns only the earned bonus, base survives
-  const bonus = fromEthScore + fromLocalScore;
+  const bonus = totalSlope + fromLocalScore;
   const liquidationPenalty = rawPenalty > bonus ? bonus : rawPenalty;
   const available = creditLimit > openDebt ? creditLimit - openDebt : 0n;
 
@@ -141,10 +163,14 @@ export async function fetchBorrowerOverview(address: string): Promise<BorrowerOv
     localScore,
     openDebt,
     loansCompleted,
+    disciplineScore,
+    capitalGatePassed,
+    capitalGateThreshold: gateThreshold,
     creditLimit,
     available,
     baseLimit: creditLimit > 0n ? baseLimit : 0n,
     fromEthScore,
+    fromDiscipline,
     fromLocalScore,
     liquidationPenalty,
   };

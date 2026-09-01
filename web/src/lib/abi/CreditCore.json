@@ -35,6 +35,19 @@
   },
   {
     "type": "function",
+    "name": "CAPITAL_GATE_THRESHOLD",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "DEFAULT_LOAN_DURATION_BLOCKS",
     "inputs": [],
     "outputs": [
@@ -87,6 +100,32 @@
   },
   {
     "type": "function",
+    "name": "DISCIPLINE_SCORE_CAP",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "EIGEN_DEPOSIT_FLAT_SCORE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "EXPECTED_CHAIN_KEY",
     "inputs": [],
     "outputs": [
@@ -94,6 +133,19 @@
         "name": "",
         "type": "uint64",
         "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "EXTERNAL_REPAY_FLAT_SCORE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -282,6 +334,19 @@
   },
   {
     "type": "function",
+    "name": "MIN_SOURCE_BOND",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "POOL",
     "inputs": [],
     "outputs": [
@@ -399,6 +464,11 @@
         "name": "liquidationPenalty",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "disciplineScore",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -457,6 +527,25 @@
     "inputs": [
       {
         "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "effectiveScoreOf",
+    "inputs": [
+      {
+        "name": "borrowerAddr",
         "type": "address",
         "internalType": "address"
       }
@@ -538,19 +627,6 @@
   },
   {
     "type": "function",
-    "name": "loanBookOnSepolia",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "loans",
     "inputs": [
       {
@@ -625,6 +701,19 @@
         "name": "",
         "type": "uint64",
         "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "minDisciplineEventAmount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -714,23 +803,23 @@
   },
   {
     "type": "function",
-    "name": "registerLoanBookOnSepolia",
+    "name": "registerBondedSource",
     "inputs": [
       {
-        "name": "loanBook",
+        "name": "source",
         "type": "address",
         "internalType": "address"
       }
     ],
     "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "payable"
   },
   {
     "type": "function",
-    "name": "registerVaultOnSepolia",
+    "name": "registerVerifiedSource",
     "inputs": [
       {
-        "name": "vault",
+        "name": "source",
         "type": "address",
         "internalType": "address"
       }
@@ -786,6 +875,19 @@
   },
   {
     "type": "function",
+    "name": "setMinDisciplineEventAmount",
+    "inputs": [
+      {
+        "name": "newAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setRepaymentBridge",
     "inputs": [
       {
@@ -796,6 +898,35 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "sources",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "tier",
+        "type": "uint8",
+        "internalType": "enum CreditCore.SourceTier"
+      },
+      {
+        "name": "bond",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "attributedLimit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -831,16 +962,46 @@
   },
   {
     "type": "function",
-    "name": "vaultOnSepolia",
-    "inputs": [],
-    "outputs": [
+    "name": "withdrawSourceBond",
+    "inputs": [
       {
-        "name": "",
+        "name": "source",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address payable"
       }
     ],
-    "stateMutability": "view"
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "DisciplineScoreIncreased",
+    "inputs": [
+      {
+        "name": "borrower",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "delta",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "queryId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -894,19 +1055,6 @@
         "type": "bytes32",
         "indexed": true,
         "internalType": "bytes32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LoanBookOnSepoliaRegistered",
-    "inputs": [
-      {
-        "name": "loanBook",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -1014,6 +1162,19 @@
   },
   {
     "type": "event",
+    "name": "MinDisciplineEventAmountUpdated",
+    "inputs": [
+      {
+        "name": "newAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "OwnershipTransferred",
     "inputs": [
       {
@@ -1046,13 +1207,75 @@
   },
   {
     "type": "event",
-    "name": "VaultOnSepoliaRegistered",
+    "name": "SourceBondWithdrawn",
     "inputs": [
       {
-        "name": "vault",
+        "name": "source",
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SourceBonded",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "staker",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "addedBond",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "totalBond",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SourceRegistered",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "tier",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum CreditCore.SourceTier"
       }
     ],
     "anonymous": false
