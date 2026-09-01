@@ -110,7 +110,51 @@ repaid) lives on the historical v2 core.
 Sepolia → CC3 attestation lag in the run: ~8 minutes (matches Attestcoin's stated design — attestation
 deliberately trails the source head). A proof for an already-attested block is served by the prover from cache within seconds.
 
-## Real external-protocol Repay on Morpho Blue Sepolia (2026-08-31, pending v4 pipeline)
+## CreditCore v4 redeploy: the tiered credit bureau goes live (2026-09-01)
+
+CreditCore v3 and RepaymentBridge v4 were decommissioned on 2026-09-01 with the credit-bureau pivot
+(tier field / per-source bond-cap / capital gate — see the Integration Summary "v4" section). Before
+the redeploy the open 2.1 CTC loan was repaid in full at the overdue penalty rate (2.15 CTC, tx
+`0xaf09845476e3e13403f4acd30e4b788d4d6b2694f7c3ed8db00dba6ee87914fd`) so the reused LPPool released
+its reserved principal (`outstandingPrincipal` → 0, totalAssets 100.805 after absorbing the interest).
+One deploy-time finding, stated openly: the v4 core (registry + parsers) exceeded CC3's 24,576-byte
+runtime code limit (`CreateContractLimit`) — the solc optimizer (200 runs) was enabled repo-wide,
+bringing it to 17,928 bytes; the full suite (88 tests) passes identically under the optimizer.
+
+| Contract | Address | Notes |
+|---|---|---|
+| CreditCore v4 | `0x02501978888A9BedfED93F9665c7DDeA466f12F5` | created in CC3 block 5411029; demo schedule 240/60 unchanged |
+| RepaymentBridge v5 | `0x1e9E90d0a47Cc3E080B37F986e1Bf7E946446713` | same source as v4 bridge, rebound to the new core |
+| WrappedUSDC v4 | `0xF3663288a86BeeAD53Bf9C275E663bA9c247A7AC` | created by the bridge constructor |
+
+On-chain source registry at deploy (all read back and verified): ScoringVault, Morpho Blue Sepolia
+singleton (`0xd011…4A14`) and Aave v3 Sepolia Pool (`0x6Ae4…8951`) as **Verified**; LoanBookSim as
+**Bonded with a real 10 CTC bond posted** — the simulator is no longer silently trusted.
+
+All nine historical Sepolia proofs were replayed to the v4 core with fresh proof deliveries, plus the
+real Morpho Repay as the tenth — zero failures:
+
+| # | Replayed Sepolia event | CC3 delivery tx | Result |
+|---|---|---|---|
+| 1–6 | six ScoringVault deposits | `0xdc6ae575…15e3`, `0x350e4505…a64f`, `0xe4f38752…dcdb`, `0xcc66cb58…fa4c`, `0x5a256def…ae12`, `0xd0e44cd4…c0d8` | `EthScoreIncreased` ×6, capital 0.027 restored |
+| 7 | LoanBookSim repayment sim | `0x0e26ee28584b3b8446d295cedc9199f10bca947417c6503b804086ece7d3194c` | `DisciplineScoreIncreased` +0.35 (bonded source: 3.5 CTC attributed against the 10 CTC bond) |
+| 8–9 | two LoanBookSim liquidations | `0x1bc80bdd…85ab`, `0x0c8374fd…6133` | `LiquidationPenaltyApplied` 1 + 2 CTC (bonded: penalties drew 3 more CTC of attribution — 6.5/10 total) |
+| 10 | **Morpho Blue Sepolia Repay `0xf232bbd7…ee17`** | **`0x5d32a354bc427a4f64c8d25701fe6e9ca3a9eb0dce196aa6abf31dfb71faf38b`** | **`DisciplineScoreIncreased` +0.1 — the first REAL external-protocol DISCIPLINE record in the bureau (action `ScoreMorphoRepay`, Verified-tier singleton, 50e6 assets clear the dust floor by 5000×)** |
+
+Post-replay bureau state (read from CreditCore v4, matches the pre-deploy arithmetic exactly):
+
+| Quantity | Value | Reconciliation |
+|---|---|---|
+| capital (ethScore) / depositScoreOf | 0.027 | six proven deposits, joint cap untouched ✓ |
+| disciplineScore | 0.45 | 0.35 (sim repay: 0.25 + 0.1 flat) + 0.1 (Morpho flat) ✓ |
+| capital gate (threshold 0.015) | PASSED at 1.8× | 0.027 ≥ 0.015 → discipline counts ✓ |
+| effectiveScore | 0.477 | 0.027 + 0.45 ✓ |
+| liquidationPenalty | 3.0 | 1 (first) + 2 (repeat) ✓ |
+| creditLimit | **6.67 CTC** | 5 (BASE) + (0.477 − 0.01)×10 − 3 ✓ |
+| sources[LoanBookSim] | Bonded, bond 10, attributed 6.5 | 3.5 (discipline×slope) + 3.0 (penalties) ≤ bond ✓ |
+| localScore / loansCompleted | 0 / 0 | CC3-internal history not replayable — the flywheel scene runs fresh on v4 |
+
+## Real external-protocol Repay on Morpho Blue Sepolia (2026-08-31, delivered to the v4 pipeline — see above)
 
 TruthGate's own permissionless market on the official Morpho Blue Sepolia singleton
 `0xd011EE229E7459ba1ddd22631eF7bF528d424A14` — a REAL external protocol producing the

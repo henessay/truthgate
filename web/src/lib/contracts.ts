@@ -70,8 +70,9 @@ export interface BorrowerOverview {
   liquidationPenalty: bigint;
 }
 
-/** Block shortly before the CC3 contracts were deployed — lower bound for queryFilters. */
-export const CC3_DEPLOY_BLOCK = 5_362_097;
+/** Block shortly before the CC3 contracts were deployed — lower bound for queryFilters.
+ * v4 core created in block 5411029 (tx 0xa8df4ddf…a39f). */
+export const CC3_DEPLOY_BLOCK = 5_411_028;
 
 export interface PoolStats {
   balance: bigint;

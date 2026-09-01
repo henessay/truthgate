@@ -104,12 +104,6 @@
           "identity": "official Sepolia deployment per docs.morpho.org (morpho-blue v1.0.0, same source); code present on-chain. TruthGate demo market live on it: marketId 0x8db3b66308de899b5dd81c0a9de5b423fbc8fe287e2f7d72e3b1e73250eaf722 (tUSDC loan / DAI collateral, IRM address(0), LLTV 77%, FixedPriceOracle 0x62a87bA957f07E70877EEB741eD5e0441Acc15b5)"
         }
       ],
-      "pendingPipelineEvidence": {
-        "event": "Repay",
-        "chain": "sepolia",
-        "tx": "0xf232bbd79c02655716e8f2ff983f7d67d7987b6be49cac9fb03586669396ee17",
-        "note": "REAL full-cycle Repay on the official Sepolia singleton (borrow 50 tUSDC -> repay by shares, exact zero-interest close, receipt verified at block 11604843; caller = onBehalf = demo borrower). Pending DISCIPLINE proof: replays through the pipeline once CreditCore v4 ships ScoreMorphoRepay"
-      },
       "events": [
         {
           "name": "Repay",
@@ -127,7 +121,14 @@
           "parserStatus": "implemented + mainnet-pinned",
           "evidenceTx": "0xd47ca9ff33d59af1ff6dd0f2894f749d6799d5ed12f717f667c9c44bb70a2d2b"
         }
-      ]
+      ],
+      "pipelineEvidence": {
+        "event": "Repay",
+        "chain": "sepolia",
+        "tx": "0xf232bbd79c02655716e8f2ff983f7d67d7987b6be49cac9fb03586669396ee17",
+        "note": "REAL full-cycle Repay on the official Sepolia singleton (borrow 50 tUSDC -> repay by shares, exact zero-interest close, receipt verified at block 11604843; caller = onBehalf = demo borrower). DELIVERED 2026-09-01 through the live pipeline to CreditCore v4 as action ScoreMorphoRepay: DisciplineScoreIncreased +0.1, CC3 tx 0x5d32a354bc427a4f64c8d25701fe6e9ca3a9eb0dce196aa6abf31dfb71faf38b - the bureau's first real external-protocol DISCIPLINE record",
+        "cc3DeliveryTx": "0x5d32a354bc427a4f64c8d25701fe6e9ca3a9eb0dce196aa6abf31dfb71faf38b"
+      }
     },
     {
       "id": "compound-v3",

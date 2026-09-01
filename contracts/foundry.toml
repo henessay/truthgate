@@ -4,6 +4,10 @@ out = "out"
 libs = ["lib", "node_modules"]
 solc_version = "0.8.24"
 evm_version = "cancun"
+# CreditCore v4 (tiered registry + parsers) exceeds the 24576 B runtime limit
+# without the optimizer (forge default is off); 200 runs brings it well under.
+optimizer = true
+optimizer_runs = 200
 remappings = [
     "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
     "@gluwa/usc-contracts/=node_modules/@gluwa/usc-contracts/",

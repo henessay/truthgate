@@ -18,7 +18,7 @@ How TruthGate consumes proven Sepolia events via the USC (Attestcoin) protocol o
 
 ## Scoring model and score-farming protection
 
-Credit limit: `limit = BASE_LIMIT + slope×(ethScore − MIN_ETH_SCORE) + K×localScore` (base capped at MAX_BASE_LIMIT). Two independent scores, each with its own source of truth and its own score-farming protection — the answer to "what stops someone from buying the limit cheaply":
+Credit limit: `limit = BASE_LIMIT + slope×(effectiveScore − MIN_ETH_SCORE) + K×localScore` (base capped at MAX_BASE_LIMIT), where `effectiveScore = capital + gate(capital ≥ CAPITAL_GATE_THRESHOLD)×discipline` — see the v4 trust model below. Since v4 the proven-event score is split into a CAPITAL component (`ethScore`: deposits and staking) and a DISCIPLINE component (`disciplineScore`: proven repayments), each with its own source of truth and its own score-farming protection — the answer to "what stops someone from buying the limit cheaply":
 
 **ethScore (reputation from Ethereum)** grows only from Attestcoin-proven Sepolia events:
 
@@ -47,6 +47,24 @@ localScoreDelta = principal × min(heldBlocks, LOAN_DURATION_BLOCKS) / LOAN_DURA
 
 Why the "borrow-and-repay cycle" attack no longer works: previously any full repayment gave a fixed `+1` (= +1 CTC of limit), and a cycle of minimal loans bought the limit for roughly 0.005% of its value (only the interest on a micro-loan). Now an instant cycle yields exactly 0 (both by the hold threshold and by the proportion `heldBlocks = 0`), and above the threshold the reward is proportional to `principal × time` — to gain +1 CTC of limit you must hold ~4.5 CTC for the full term and pay ~0.225 CTC of interest (5%), i.e. the limit costs ≥ ~22.5% of its value in paid interest, regardless of how it is split across loans. The only way to "farm" localScore is to actually use credit and pay for it — which is exactly the behavior being measured.
 
+## v4: the credit-bureau trust model (the self-attestation problem, fixed structurally)
+
+Attestcoin's proof answers exactly one question: *was this event emitted by contract Y in a finalized source-chain block?* It cannot answer whether Y is an honest lender. Without a second layer, anyone could deploy a contract that emits `Repay` events and write themselves a credit history — the self-attestation problem. CreditCore v4 closes it with three structural fixes:
+
+**1. Tier field.** Every event emitter carries an on-chain trust tier in the source registry (`sources` mapping):
+
+- **VERIFIED** — canonical protocol deployments we pinned against mainnet (Aave, Morpho, Spark, Comet, Rocket Pool, EigenLayer) plus the ScoringVault (its deposit events are intrinsically backed by `msg.value` — it is the capital anchor, and gating capital by bonds would make the capital gate circular). Full weight. Registration is owner-only.
+- **BONDED** — any lender contract may join **permissionlessly** via `registerBondedSource() payable`, staking a CTC bond behind its records. Weight is capped by the bond (fix 2). Our own LoanBookSim runs at this tier with a real 10 CTC bond posted — it is no longer silently trusted.
+- **UNKNOWN** — everything else (the mapping default). Events still verify and emit (visible history), but contribute **zero** to every score. Negative signals are tier-weighted too: an unregistered contract cannot degrade anyone's score (griefing shield).
+
+**2. Per-source bond-cap.** For a BONDED source, the total credit-limit influence attributable to its records — positive score deltas converted through the limit slope, and liquidation penalties as-is — is clamped at its staked bond (`attributedLimit ≤ bond`, linear, constant ratio = the existing `SCORE_SLOPE`). The invariant is literal: *a fake lender cannot write more reputation than it has capital at risk* — attack cost ≥ extracted benefit — and symmetrically cannot inflict more limit damage than its bond. Attribution history is never reset: withdrawing and re-posting a bond does not launder it. Bond withdrawal is owner-arbitrated in v4; slashing/challenge of dishonest bonded sources is roadmap, stated as such.
+
+**3. Capital gate.** DISCIPLINE contributes to a borrower's limit only while that borrower has independently proven CAPITAL of at least `CAPITAL_GATE_THRESHOLD` (0.015 ETH) — an indicator multiplier evaluated at read time, retroactive in both directions. A self-made lender cannot farm score for a wallet that has no real skin in the game. The threshold is a demo-scale constant; production pools calibrate to their loan sizes.
+
+**Dust-repay floor and the discipline cap.** External repayments earn a flat `EXTERNAL_REPAY_FLAT_SCORE` (0.1) per proven event — amounts are heterogeneous loan-token units and stay emit-only. Flat credits invite dust spam (1-wei repays on a permissionless market), so two bounds apply: a per-event floor `minDisciplineEventAmount` (default 1e4 raw loan-token units — a deliberately decimals-unaware heuristic, since comparing amounts across tokens needs oracles; it kills literal-wei spam, nothing more) and the per-borrower `DISCIPLINE_SCORE_CAP` (1.0 = at most +10 CTC of limit from discipline) as the economic bound. Stated honestly: an attacker who passes the capital gate can still farm gas-price repays on a verified permissionless protocol **up to the cap** — bounded, not eliminated; elimination needs oracle-weighted amounts (roadmap).
+
+**Owner powers / decentralization roadmap.** We enumerate our own trust assumptions. The contract owner can, today: register VERIFIED sources (curation of canonical deployments), arbitrate bonded-source bond withdrawal (no slashing/challenge mechanism yet), tune the dust floor `setMinDisciplineEventAmount`, set the freshness window `setMinAcceptedHeight`, and mark loans expired. Each is a v4 pragmatism, not a design endpoint: the roadmap replaces curation with on-chain verification proofs where possible, bond arbitration with a challenge game, and the knobs with governance.
+
 ## Credit bureau: protocol coverage beyond the live pipeline
 
 The bureau's parser library extends past the contracts wired into the live Sepolia pipeline. `docs/protocol-registry.json` is the machine-readable registry (protocol / deployments / events / category / tier); `contracts/test/MainnetParity.t.sol` pins every parser against **real historical transactions of the verified live mainnet contracts** — raw log bytes decoded through our parsers with every field asserted, source tx hash cited. A topic0 match alone cannot catch data-layout drift when a fork keeps the signature string but changes field assumptions; decoding real bytes can.
@@ -72,9 +90,9 @@ Bureau parsers cover protocols totaling **≈ $40.2B TVL** (per-protocol figures
 
 | Protocol | Events | Category | Tier | Parser | TVL |
 |---|---|---|---|---|---|
-| Aave v3 | `Repay`, `LiquidationCall` | DISCIPLINE, NEGATIVE | mainnet verified + **Sepolia live** (LiquidationCall in the pipeline today; Repay action v4-pending) | `AaveV3Parser` | $17.2B |
+| Aave v3 | `Repay`, `LiquidationCall` | DISCIPLINE, NEGATIVE | mainnet verified + **Sepolia live** (Verified source on CreditCore v4; `ScoreAaveRepay` action live, watcher armed) | `AaveV3Parser` | $17.2B |
 | Spark (SparkLend) | `Repay`, `LiquidationCall` | DISCIPLINE, NEGATIVE | mainnet verified (fork byte-identical — same parser) | `AaveV3Parser` | $4.4B |
-| Morpho Blue | `Repay`, `Liquidate` | DISCIPLINE, NEGATIVE | mainnet verified + official Sepolia deployment (live-pipeline candidate via the demo market) | `MorphoBlueParser` | $9.5B |
+| Morpho Blue | `Repay`, `Liquidate` | DISCIPLINE, NEGATIVE | mainnet verified + **Sepolia LIVE PIPELINE**: the real demo-market Repay is delivered on-chain as a DISCIPLINE record (`ScoreMorphoRepay`, see live-run) | `MorphoBlueParser` | $9.5B |
 | Compound v3 (Comet) | `AbsorbDebt` | NEGATIVE only (DISCIPLINE unprovable — see below) | mainnet verified | `CompoundV3Parser` | $1.4B |
 | Rocket Pool | `DepositReceived` | CAPITAL | mainnet verified (address resolved via RocketStorage) | `RocketPoolParser` | $1.3B |
 | EigenLayer | `Deposit` (current 3-param layout) | CAPITAL (flat, joint cap) | mainnet verified + official Sepolia deployment | `EigenLayerParser` | $6.4B |
