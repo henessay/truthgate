@@ -58,8 +58,7 @@ contract RepaymentBridgeTest is Test {
         pool.setCreditCore(address(core));
         pool.setBridge(address(bridge));
         core.setRepaymentBridge(address(bridge));
-        core.registerVaultOnSepolia(CREDIT_VAULT_ON_SEPOLIA);
-        core.registerLoanBookOnSepolia(address(0x10AB));
+        core.registerVerifiedSource(CREDIT_VAULT_ON_SEPOLIA);
         bridge.registerRepaymentVault(REPAYMENT_VAULT_ON_SEPOLIA);
 
         vm.deal(alice, 1000 ether);
@@ -145,7 +144,7 @@ contract RepaymentBridgeTest is Test {
         assertEq(usdcShare, 3 ether);
         assertEq(uint8(status), uint8(CreditCore.LoanStatus.PartlyRepaid));
 
-        (, , uint256 openDebt, , ) = core.borrowers(bob);
+        (, , uint256 openDebt, , , ) = core.borrowers(bob);
         assertEq(openDebt, 7.5 ether);
 
         // no CTC moved: the pool is untouched until the SwapDesk settlement

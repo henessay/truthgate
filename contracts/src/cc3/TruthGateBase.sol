@@ -137,18 +137,18 @@ abstract contract TruthGateBase is Ownable {
         }
     }
 
-    // TRUTHGATE: shared transaction-content validator. Combines
-    // USCLoanManager._validateTransactionContents (transaction type, receiptStatus == 1,
-    // log filtering by signature) with a mandatory emitter-address check for EVERY
-    // extracted log — in Gluwa's code that check was a separate step and applied only
-    // to the first log. Project invariant #1 (CLAUDE.md) (RxStatus == 1) lives here.
-    function _validateAndExtractLogs(
-        bytes memory encodedTransaction,
-        bytes32 eventSignature,
-        address expectedSource
-    ) internal pure returns (EvmV1Decoder.LogEntry[] memory selectedEventLogs) {
-        require(expectedSource != address(0), "source contract not set");
-
+    // TRUTHGATE: shared transaction-content validator WITHOUT an emitter pin.
+    // Performs USCLoanManager._validateTransactionContents (transaction type,
+    // receiptStatus == 1, log filtering by signature). Project invariant #1
+    // (CLAUDE.md) (RxStatus == 1) lives here. The caller is responsible for
+    // deciding what each extracted log's emitter is worth — either by pinning it
+    // (_validateAndExtractLogs below) or by weighting per-emitter trust (the
+    // CreditCore tiered source registry).
+    function _validateAndExtractLogsAnySource(bytes memory encodedTransaction, bytes32 eventSignature)
+        internal
+        pure
+        returns (EvmV1Decoder.LogEntry[] memory selectedEventLogs)
+    {
         // Validate transaction type
         uint8 txType = EvmV1Decoder.getTransactionType(encodedTransaction);
         require(EvmV1Decoder.isValidTransactionType(txType), "Unsupported transaction type");
@@ -161,9 +161,25 @@ abstract contract TruthGateBase is Ownable {
         selectedEventLogs = EvmV1Decoder.getLogsByEventSignature(receipt, eventSignature);
         require(selectedEventLogs.length > 0, "No events of required type found");
 
-        // TRUTHGATE: every extracted event must have been emitted by the expected
-        // source contract — otherwise any contract on the source chain could forge
-        // an event with the required signature.
+        return selectedEventLogs;
+    }
+
+    // TRUTHGATE: pinned-emitter variant — the validator above plus a mandatory
+    // emitter-address check for EVERY extracted log (in Gluwa's code that check was
+    // a separate step and applied only to the first log). Used where exactly one
+    // source contract is legitimate (RepaymentBridge and its repayment vault).
+    function _validateAndExtractLogs(
+        bytes memory encodedTransaction,
+        bytes32 eventSignature,
+        address expectedSource
+    ) internal pure returns (EvmV1Decoder.LogEntry[] memory selectedEventLogs) {
+        require(expectedSource != address(0), "source contract not set");
+
+        selectedEventLogs = _validateAndExtractLogsAnySource(encodedTransaction, eventSignature);
+
+        // Every extracted event must have been emitted by the expected source
+        // contract — otherwise any contract on the source chain could forge an
+        // event with the required signature.
         for (uint256 i; i < selectedEventLogs.length; i++) {
             require(selectedEventLogs[i].address_ == expectedSource, "log from unexpected source contract");
         }

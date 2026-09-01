@@ -13,6 +13,7 @@ contract CreditCoreTest is Test {
     address constant LOANBOOK_ON_SEPOLIA = address(0x10AB);
     address constant BRIDGE = address(0xB41D);
     address constant BURN = address(0xdEaD);
+    uint256 constant LOANBOOK_BOND = 10 ether;
 
     address alice = address(0xA11CE); // LP
     address bob = address(0xB0B); // borrower (same address on Sepolia and CC3)
@@ -41,8 +42,12 @@ contract CreditCoreTest is Test {
         pool = new LPPool();
         core = new CreditCore(payable(address(pool)), 0, 0); // 0,0 → production defaults 100k/25k
         pool.setCreditCore(address(core));
-        core.registerVaultOnSepolia(VAULT_ON_SEPOLIA);
-        core.registerLoanBookOnSepolia(LOANBOOK_ON_SEPOLIA);
+        // v4 tiered registry: the vault is a Verified source; the loan-book sim is
+        // BONDED with a real stake (mirrors the live deployment plan — it is no
+        // longer silently trusted)
+        core.registerVerifiedSource(VAULT_ON_SEPOLIA);
+        vm.deal(address(this), 100 ether);
+        core.registerBondedSource{value: LOANBOOK_BOND}(LOANBOOK_ON_SEPOLIA);
         core.setRepaymentBridge(BRIDGE);
 
         vm.deal(alice, 1000 ether);
@@ -165,7 +170,19 @@ contract CreditCoreTest is Test {
     }
 
     function _ethScore(address who) internal view returns (uint256 s) {
-        (s, , , , ) = core.borrowers(who);
+        (s, , , , , ) = core.borrowers(who);
+    }
+
+    function _discipline(address who) internal view returns (uint256 d) {
+        (, , , , , d) = core.borrowers(who);
+    }
+
+    function _sourceInfo(address src)
+        internal
+        view
+        returns (CreditCore.SourceTier tier, uint256 bond, uint256 attributed)
+    {
+        (tier, bond, attributed) = core.sources(src);
     }
 
     // ---------- scoring ----------
@@ -178,8 +195,8 @@ contract CreditCoreTest is Test {
     function test_scoreGrowsOnlyViaValidProof() public {
         assertEq(_ethScore(bob), 0);
 
-        // an event with the right signature but from a foreign contract does not count
-        vm.expectRevert("log from unexpected source contract");
+        // an event with the right signature from an UNREGISTERED contract verifies
+        // and emits, but carries zero weight (v4 tier model: Unknown = 0)
         _execute(0, 100, _depositTx(address(0xDEAD00), bob, 1 ether, 1));
         assertEq(_ethScore(bob), 0);
 
@@ -188,13 +205,20 @@ contract CreditCoreTest is Test {
         _execute(0, 101, _repayOnEthTx(LOANBOOK_ON_SEPOLIA, bob, 1, 1 ether));
         assertEq(_ethScore(bob), 0);
 
-        // a valid deposit proof
+        // a valid deposit proof from the Verified vault → CAPITAL
         _proveDeposit(1 ether, 102);
         assertEq(_ethScore(bob), 1 ether);
 
-        // a valid proof of repayment on Sepolia: score += amount + flat bonus
+        // a valid proof of repayment on Sepolia → DISCIPLINE (v4 split):
+        // amount + flat bonus, in disciplineScore, not ethScore
         _execute(1, 103, _repayOnEthTx(LOANBOOK_ON_SEPOLIA, bob, 7, 0.5 ether));
-        assertEq(_ethScore(bob), 1.6 ether); // 1 + 0.5 + 0.1
+        assertEq(_ethScore(bob), 1 ether);
+        assertEq(_discipline(bob), 0.6 ether); // 0.5 + 0.1
+        // capital 1 ETH >= gate 0.015 → discipline counts in the effective score
+        assertEq(core.effectiveScoreOf(bob), 1.6 ether);
+        // bond-cap accounting: the bonded loan book was charged 0.6 × slope = 6 CTC
+        (, , uint256 attributed) = _sourceInfo(LOANBOOK_ON_SEPOLIA);
+        assertEq(attributed, 6 ether);
     }
 
     function test_depositCirculationCappedByScoreCap() public {
@@ -206,9 +230,12 @@ contract CreditCoreTest is Test {
         assertEq(_ethScore(bob), core.DEPOSIT_SCORE_CAP());
         assertEq(core.depositScoreOf(bob), core.DEPOSIT_SCORE_CAP());
 
-        // repayments are not limited by the cap
+        // repayments draw from their own cap: a 1.1 base (1 + flat) clamps at
+        // DISCIPLINE_SCORE_CAP — flat-credit farming is bounded per borrower
         _execute(1, 303, _repayOnEthTx(LOANBOOK_ON_SEPOLIA, bob, 7, 1 ether));
-        assertEq(_ethScore(bob), core.DEPOSIT_SCORE_CAP() + 1.1 ether);
+        assertEq(_ethScore(bob), core.DEPOSIT_SCORE_CAP());
+        assertEq(_discipline(bob), core.DISCIPLINE_SCORE_CAP());
+        assertEq(core.effectiveScoreOf(bob), core.DEPOSIT_SCORE_CAP() + core.DISCIPLINE_SCORE_CAP());
     }
 
     function test_replayedScoreProofDoesNotDoubleScore() public {
@@ -260,7 +287,7 @@ contract CreditCoreTest is Test {
 
         // ethScore is untouched — the penalty is a separate counter
         assertEq(_ethScore(bob), 1 ether);
-        (, , , , uint256 penalty) = core.borrowers(bob);
+        (, , , , uint256 penalty, ) = core.borrowers(bob);
         assertEq(penalty, core.LIQUIDATION_PENALTY_CAP());
 
         // wrong log shape (a 2-topic event forged under the liquidation signature) reverts
@@ -296,7 +323,7 @@ contract CreditCoreTest is Test {
         vm.prank(bob);
         uint256 loanId = core.borrow(1 ether);
         assertEq(loanId, 1);
-        (, , uint256 openDebt, , ) = core.borrowers(bob);
+        (, , uint256 openDebt, , , ) = core.borrowers(bob);
         assertEq(openDebt, 1.05 ether);
     }
 
@@ -328,7 +355,7 @@ contract CreditCoreTest is Test {
         assertEq(bob.balance, 10 ether);
         assertEq(address(pool).balance, 90 ether);
         assertEq(pool.outstandingPrincipal(), 10 ether);
-        (, , uint256 openDebt, , ) = core.borrowers(bob);
+        (, , uint256 openDebt, , , ) = core.borrowers(bob);
         assertEq(openDebt, 10.5 ether); // principal + 5%
 
         // full repayment via path A
@@ -347,7 +374,7 @@ contract CreditCoreTest is Test {
 
         // repayment in the origination block: the loan is closed, but localScore does
         // not grow — held shorter than MIN_HOLD_BLOCKS (see the "localScore: anti score-farming" section)
-        (, uint256 localScore, uint256 debtAfter, uint256 completed, ) = core.borrowers(bob);
+        (, uint256 localScore, uint256 debtAfter, uint256 completed, , ) = core.borrowers(bob);
         assertEq(localScore, 0);
         assertEq(debtAfter, 0);
         assertEq(completed, 1);
@@ -408,7 +435,7 @@ contract CreditCoreTest is Test {
         assertEq(address(pool).balance, 90 ether);
         assertEq(pool.outstandingPrincipal(), 10 ether);
 
-        (, , uint256 openDebt, , ) = core.borrowers(bob);
+        (, , uint256 openDebt, , , ) = core.borrowers(bob);
         assertEq(openDebt, 7.5 ether);
     }
 
@@ -433,7 +460,7 @@ contract CreditCoreTest is Test {
         assertEq(uint8(status), uint8(CreditCore.LoanStatus.Repaid));
 
         // principal of 10 CTC over the full term → 10/4.5 ≈ 2.22 units of localScore
-        (, uint256 localScore, , uint256 completed, ) = core.borrowers(bob);
+        (, uint256 localScore, , uint256 completed, , ) = core.borrowers(bob);
         assertEq(localScore, (uint256(10 ether) * 1 ether) / core.LOCAL_SCORE_NORM_PRINCIPAL());
         assertEq(completed, 1);
     }
@@ -454,7 +481,7 @@ contract CreditCoreTest is Test {
             core.repayInCTC{value: 0.00105 ether}(id);
         }
 
-        (, uint256 localScore, , uint256 completed, ) = core.borrowers(bob);
+        (, uint256 localScore, , uint256 completed, , ) = core.borrowers(bob);
         assertEq(localScore, 0);
         assertEq(core.creditLimit(bob), limitBefore);
         assertEq(completed, 20); // informational counter, not part of the limit
@@ -475,7 +502,7 @@ contract CreditCoreTest is Test {
 
         // the normalization principal over the full term → exactly 1 unit,
         // limit growth of +1 CTC — like the "+1 per repayment" of the old model
-        (, uint256 localScore, , , ) = core.borrowers(bob);
+        (, uint256 localScore, , , , ) = core.borrowers(bob);
         assertEq(localScore, 1 ether);
         assertEq(core.creditLimit(bob), limitBefore + core.LOCAL_SCORE_K());
     }
@@ -490,7 +517,7 @@ contract CreditCoreTest is Test {
         vm.prank(bob);
         core.repayInCTC{value: 4.725 ether}(id);
 
-        (, uint256 localScore, , , ) = core.borrowers(bob);
+        (, uint256 localScore, , , , ) = core.borrowers(bob);
         assertEq(localScore, 0.5 ether);
     }
 
@@ -504,7 +531,7 @@ contract CreditCoreTest is Test {
         vm.roll(block.number + core.MIN_HOLD_BLOCKS() - 1);
         vm.prank(bob);
         core.repayInCTC{value: 4.725 ether}(id1);
-        (, uint256 s1, , , ) = core.borrowers(bob);
+        (, uint256 s1, , , , ) = core.borrowers(bob);
         assertEq(s1, 0);
 
         // exactly at the threshold — a quarter of the full score (MIN_HOLD = term/4)
@@ -513,7 +540,7 @@ contract CreditCoreTest is Test {
         vm.roll(block.number + core.MIN_HOLD_BLOCKS());
         vm.prank(bob);
         core.repayInCTC{value: 4.725 ether}(id2);
-        (, uint256 s2, , , ) = core.borrowers(bob);
+        (, uint256 s2, , , , ) = core.borrowers(bob);
         assertEq(s2, 0.25 ether);
     }
 
@@ -534,8 +561,7 @@ contract CreditCoreTest is Test {
         LPPool demoPool = new LPPool();
         CreditCore demo = new CreditCore(payable(address(demoPool)), 240, 60);
         demoPool.setCreditCore(address(demo));
-        demo.registerVaultOnSepolia(VAULT_ON_SEPOLIA);
-        demo.registerLoanBookOnSepolia(LOANBOOK_ON_SEPOLIA);
+        demo.registerVerifiedSource(VAULT_ON_SEPOLIA);
         vm.prank(alice);
         demoPool.stake{value: 100 ether}();
 
@@ -558,8 +584,8 @@ contract CreditCoreTest is Test {
         vm.prank(bob);
         demo.repayInCTC{value: 4.725 ether}(idDemo);
 
-        (, uint256 sProd, , , ) = core.borrowers(bob);
-        (, uint256 sDemo, , , ) = demo.borrowers(bob);
+        (, uint256 sProd, , , , ) = core.borrowers(bob);
+        (, uint256 sDemo, , , , ) = demo.borrowers(bob);
         assertEq(sProd, sDemo);
         assertEq(sDemo, 0.5 ether);
 
@@ -576,8 +602,8 @@ contract CreditCoreTest is Test {
         vm.prank(bob);
         demo.repayInCTC{value: 4.725 ether}(idDemo2);
 
-        (, sProd, , , ) = core.borrowers(bob);
-        (, sDemo, , , ) = demo.borrowers(bob);
+        (, sProd, , , , ) = core.borrowers(bob);
+        (, sDemo, , , , ) = demo.borrowers(bob);
         assertEq(sProd, sDemo);
         assertEq(sDemo, 1.5 ether);
 
@@ -619,7 +645,7 @@ contract CreditCoreTest is Test {
         assertEq(uint8(st), uint8(CreditCore.LoanStatus.Repaid));
 
         // rehabilitation: borrow is unblocked, but localScore/loansCompleted did not grow
-        (, uint256 localScore, uint256 openDebt, uint256 completed, ) = core.borrowers(bob);
+        (, uint256 localScore, uint256 openDebt, uint256 completed, , ) = core.borrowers(bob);
         assertEq(localScore, 0);
         assertEq(completed, 0);
         assertEq(openDebt, 0);
@@ -630,14 +656,16 @@ contract CreditCoreTest is Test {
     }
 
     function test_unstakeBlockedByReservedLiquidity() public {
-        // large score via repayments (deposits are capped): 1 + (9 + 0.1) = 10.1 ETH
+        // max demo-scale score: capped capital (1) + capped discipline (1) = 2 →
+        // limit 5 + (2 − 0.01) × 10 = 24.9 CTC
         _proveDeposit(1 ether, 100);
         _execute(1, 101, _repayOnEthTx(LOANBOOK_ON_SEPOLIA, bob, 1, 9 ether));
+        assertEq(core.creditLimit(bob), 24.9 ether);
 
         vm.prank(bob);
-        core.borrow(95 ether); // 5 free CTC remain in the pool
+        core.borrow(20 ether); // 80 free CTC remain in the pool
 
-        // alice owns 100% of the shares (assets 100), but only 5 are free
+        // alice owns 100% of the shares (assets 100), but only 80 are free
         vm.prank(alice);
         vm.expectRevert("liquidity reserved for open loans");
         pool.unstake(100 ether);
@@ -645,15 +673,15 @@ contract CreditCoreTest is Test {
         // partial withdrawal within the free liquidity passes
         uint256 before = alice.balance;
         vm.prank(alice);
-        pool.unstake(5 ether);
-        assertEq(alice.balance - before, 5 ether);
+        pool.unstake(80 ether);
+        assertEq(alice.balance - before, 80 ether);
     }
 
     // ---------- joint CAPITAL cap (double-counting guard) ----------
 
     function _registerCapitalSources() internal {
-        core.registerRocketDepositPool(ROCKET_POOL_SOURCE);
-        core.registerEigenStrategyManager(EIGEN_SOURCE);
+        core.registerVerifiedSource(ROCKET_POOL_SOURCE);
+        core.registerVerifiedSource(EIGEN_SOURCE);
     }
 
     /// @notice The guard itself: every CAPITAL source draws from ONE shared cap.
@@ -702,11 +730,280 @@ contract CreditCoreTest is Test {
         assertEq(core.depositScoreOf(bob), 0.5 ether); // one shared accumulator
     }
 
-    function test_capitalActions_requireRegisteredSource() public {
-        vm.expectRevert("rocket pool source not registered");
+    function test_capitalActions_unknownSourceCreditsZero() public {
+        // v4 tier model: an unregistered capital source verifies + emits, zero weight
         _execute(3, 300, _rocketDepositTx(ROCKET_POOL_SOURCE, bob, 1 ether));
-
-        vm.expectRevert("eigen source not registered");
         _execute(4, 301, _eigenDepositTx(EIGEN_SOURCE, bob, 1e18));
+        assertEq(_ethScore(bob), 0);
+        assertEq(core.depositScoreOf(bob), 0);
+    }
+
+    // ---------- v4 pivot fix 1: tier field ----------
+
+    /// @dev Aave v3 Repay layout: 4 topics (reserve, user, repayer indexed),
+    /// data = abi.encode(amount, useATokens). Subject = user, NOT repayer.
+    function _aaveRepayTx(address emitter, address user, address repayer, uint256 amount)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        LogTuple[] memory logs = new LogTuple[](1);
+        logs[0].address_ = emitter;
+        logs[0].topics = new bytes32[](4);
+        logs[0].topics[0] = keccak256("Repay(address,address,address,uint256,bool)");
+        logs[0].topics[1] = bytes32(uint256(uint160(address(0x0DA1)))); // reserve
+        logs[0].topics[2] = bytes32(uint256(uint160(user)));
+        logs[0].topics[3] = bytes32(uint256(uint160(repayer)));
+        logs[0].data = abi.encode(amount, false);
+        return _encodeTx(1, logs);
+    }
+
+    /// @dev Morpho Blue Repay layout: 4 topics (marketId, caller, onBehalf indexed),
+    /// data = abi.encode(assets, shares). Subject = onBehalf, NOT caller.
+    function _morphoRepayTx(address emitter, address caller, address onBehalf, uint256 assets)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        LogTuple[] memory logs = new LogTuple[](1);
+        logs[0].address_ = emitter;
+        logs[0].topics = new bytes32[](4);
+        logs[0].topics[0] = keccak256("Repay(bytes32,address,address,uint256,uint256)");
+        logs[0].topics[1] = bytes32(uint256(0x8DB3)); // marketId
+        logs[0].topics[2] = bytes32(uint256(uint160(caller)));
+        logs[0].topics[3] = bytes32(uint256(uint160(onBehalf)));
+        logs[0].data = abi.encode(assets, uint256(5e13));
+        return _encodeTx(1, logs);
+    }
+
+    address constant AAVE_POOL = address(0xAA7E);
+    address constant MORPHO = address(0x304F0);
+
+    function test_unknownSource_zeroWeightButNoRevert() public {
+        _proveDeposit(1 ether, 700);
+        uint256 limitBefore = core.creditLimit(bob);
+
+        // Unknown-source repayment: verifies, contributes zero discipline
+        _execute(1, 701, _repayOnEthTx(address(0xFA4E), bob, 1, 5 ether));
+        assertEq(_discipline(bob), 0);
+
+        // Unknown-source liquidation: verifies, inflicts zero penalty (griefing shield)
+        _execute(2, 702, _liquidationTx(address(0xFA4E), bob, 500e6));
+        (, , , , uint256 penalty, ) = core.borrowers(bob);
+        assertEq(penalty, 0);
+        assertEq(core.creditLimit(bob), limitBefore);
+    }
+
+    function test_verifiedExternalRepays_actions5and6() public {
+        core.registerVerifiedSource(AAVE_POOL);
+        core.registerVerifiedSource(MORPHO);
+        _proveDeposit(1 ether, 710); // pass the capital gate
+
+        // Aave Repay → flat DISCIPLINE credit to `user` (not the repayer)
+        _execute(5, 711, _aaveRepayTx(AAVE_POOL, bob, address(0x9A9E4), 5_000e6));
+        assertEq(_discipline(bob), core.EXTERNAL_REPAY_FLAT_SCORE());
+        assertEq(_discipline(address(0x9A9E4)), 0);
+
+        // Morpho Repay → flat DISCIPLINE credit to `onBehalf` (not the caller)
+        _execute(6, 712, _morphoRepayTx(MORPHO, address(0xCA11E4), bob, 50e6));
+        assertEq(_discipline(bob), 2 * core.EXTERNAL_REPAY_FLAT_SCORE());
+        assertEq(_discipline(address(0xCA11E4)), 0);
+
+        // flat, not amount-proportional: a whale repay credits the same +0.1
+        _execute(6, 713, _morphoRepayTx(MORPHO, bob, bob, 1e30));
+        assertEq(_discipline(bob), 3 * core.EXTERNAL_REPAY_FLAT_SCORE());
+
+        // and the limit reflects the gated effective score
+        assertEq(core.effectiveScoreOf(bob), 1 ether + 0.3 ether);
+    }
+
+    // ---------- v4 pivot fix 2: per-source bond-cap ----------
+
+    address constant FAKE_LENDER = address(0xFA4E1);
+
+    function test_bondCap_attributionClampedByBond() public {
+        // a permissionless lender bonds 2 CTC → can write at most 2 CTC of limit
+        vm.deal(address(this), 2 ether);
+        core.registerBondedSource{value: 2 ether}(FAKE_LENDER);
+        _proveDeposit(1 ether, 800); // gate passes; capital is from the Verified vault
+
+        // repay base would be 0.6 score = 6 CTC of limit — clamped to the bond:
+        // 2 CTC of limit = 0.2 score
+        _execute(1, 801, _repayOnEthTx(FAKE_LENDER, bob, 1, 0.5 ether));
+        assertEq(_discipline(bob), 0.2 ether);
+        (, uint256 bond, uint256 attributed) = _sourceInfo(FAKE_LENDER);
+        assertEq(bond, 2 ether);
+        assertEq(attributed, 2 ether); // exactly at the bond — attack cost == extracted benefit
+
+        // the source is exhausted: further records write nothing
+        _execute(1, 802, _repayOnEthTx(FAKE_LENDER, bob, 2, 0.5 ether));
+        assertEq(_discipline(bob), 0.2 ether);
+
+        // topping up the bond re-opens exactly the added room
+        vm.deal(address(this), 1 ether);
+        core.registerBondedSource{value: 1 ether}(FAKE_LENDER);
+        _execute(1, 803, _repayOnEthTx(FAKE_LENDER, bob, 3, 0.5 ether));
+        assertEq(_discipline(bob), 0.3 ether); // +0.1 = the 1 CTC top-up / slope
+    }
+
+    function test_bondCap_penaltiesDrawFromSameRoom() public {
+        vm.deal(address(this), 2 ether);
+        core.registerBondedSource{value: 2 ether}(FAKE_LENDER);
+        _proveDeposit(1 ether, 810);
+
+        // first liquidation: −1 CTC of limit, attributed 1 of 2
+        _execute(2, 811, _liquidationTx(FAKE_LENDER, bob, 500e6));
+        (, , , , uint256 p1, ) = core.borrowers(bob);
+        assertEq(p1, 1 ether);
+
+        // second: escalation says −2, but only 1 CTC of bond room remains
+        _execute(2, 812, _liquidationTx(FAKE_LENDER, bob, 500e6));
+        (, , , , uint256 p2, ) = core.borrowers(bob);
+        assertEq(p2, 2 ether);
+        (, , uint256 attributed) = _sourceInfo(FAKE_LENDER);
+        assertEq(attributed, 2 ether);
+
+        // third: the bonded source can no longer damage anyone
+        _execute(2, 813, _liquidationTx(FAKE_LENDER, bob, 500e6));
+        (, , , , uint256 p3, ) = core.borrowers(bob);
+        assertEq(p3, 2 ether);
+    }
+
+    function test_bondedSource_registrationRules() public {
+        // below the minimum bond
+        vm.deal(address(this), 10 ether);
+        vm.expectRevert("bond below minimum");
+        core.registerBondedSource{value: 0.5 ether}(FAKE_LENDER);
+
+        // a Verified source cannot be re-registered through the bonded path
+        vm.expectRevert("source already verified");
+        core.registerBondedSource{value: 1 ether}(VAULT_ON_SEPOLIA);
+
+        // zero top-up is rejected
+        core.registerBondedSource{value: 1 ether}(FAKE_LENDER);
+        vm.expectRevert("zero bond top-up");
+        core.registerBondedSource(FAKE_LENDER);
+
+        // permissionless: a non-owner can bond a source
+        vm.deal(bob, 1 ether);
+        vm.prank(bob);
+        core.registerBondedSource{value: 1 ether}(FAKE_LENDER);
+        (, uint256 bond, ) = _sourceInfo(FAKE_LENDER);
+        assertEq(bond, 2 ether);
+    }
+
+    function test_bondWithdrawal_demotesAndKeepsAttribution() public {
+        vm.deal(address(this), 1 ether);
+        core.registerBondedSource{value: 1 ether}(FAKE_LENDER);
+        _proveDeposit(1 ether, 820);
+
+        // fill the whole 1 CTC of attribution room (0.1 score = 1 CTC of limit)
+        _execute(1, 821, _repayOnEthTx(FAKE_LENDER, bob, 1, 0.5 ether));
+        assertEq(_discipline(bob), 0.1 ether);
+
+        // owner-arbitrated withdrawal (v4; slashing is roadmap) → back to Unknown
+        address payable sink = payable(address(0x51BB));
+        core.withdrawSourceBond(FAKE_LENDER, sink);
+        assertEq(sink.balance, 1 ether);
+        (CreditCore.SourceTier tier, uint256 bond, uint256 attributed) = _sourceInfo(FAKE_LENDER);
+        assertEq(uint8(tier), uint8(CreditCore.SourceTier.Unknown));
+        assertEq(bond, 0);
+        assertEq(attributed, 1 ether); // history survives the withdrawal
+
+        // re-bonding does NOT launder the attribution: room = 1 − 1 = 0
+        vm.deal(address(this), 1 ether);
+        core.registerBondedSource{value: 1 ether}(FAKE_LENDER);
+        _execute(1, 822, _repayOnEthTx(FAKE_LENDER, bob, 2, 0.5 ether));
+        assertEq(_discipline(bob), 0.1 ether); // unchanged
+
+        // only the owner arbitrates withdrawals
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", bob));
+        core.withdrawSourceBond(FAKE_LENDER, sink);
+    }
+
+    // ---------- v4 pivot fix 3: capital gate ----------
+
+    function test_capitalGate_disciplineDarkUntilCapitalProven() public {
+        // capital below the gate (but above MIN_ETH_SCORE): base limit works,
+        // discipline is dark
+        uint256 belowGate = core.CAPITAL_GATE_THRESHOLD() - 1;
+        _proveDeposit(belowGate, 900);
+        _execute(1, 901, _repayOnEthTx(LOANBOOK_ON_SEPOLIA, bob, 1, 0.5 ether));
+        assertEq(_discipline(bob), 0.6 ether); // recorded...
+        assertEq(core.effectiveScoreOf(bob), belowGate); // ...but not counted
+
+        // one more wei of proven capital flips the gate — retroactively:
+        // the discipline recorded while gated-out lights up
+        _execute(0, 902, _depositTx(VAULT_ON_SEPOLIA, bob, 1, 2));
+        assertEq(core.depositScoreOf(bob), core.CAPITAL_GATE_THRESHOLD());
+        assertEq(core.effectiveScoreOf(bob), core.CAPITAL_GATE_THRESHOLD() + 0.6 ether);
+
+        // and the limit follows the gated effective score
+        uint256 expected = core.BASE_LIMIT()
+            + ((core.CAPITAL_GATE_THRESHOLD() + 0.6 ether - core.MIN_ETH_SCORE()) * core.SCORE_SLOPE_NUM())
+                / core.SCORE_SLOPE_DEN();
+        assertEq(core.creditLimit(bob), expected);
+    }
+
+    /// @notice End-to-end vector from the REAL Morpho Blue Sepolia Repay that the
+    /// live pipeline replays as the first external-protocol DISCIPLINE record:
+    /// tx 0xf232bbd79c02655716e8f2ff983f7d67d7987b6be49cac9fb03586669396ee17
+    /// (Sepolia block 11604843, TruthGate demo market, full close by shares).
+    /// Topics and data are the byte-for-byte on-chain log; only the transaction
+    /// envelope is synthesized (the precompile is mocked — proof verification is
+    /// its job, log decoding is ours).
+    function test_realMorphoSepoliaRepay_action6Vector() public {
+        address morphoSepolia = 0xd011EE229E7459ba1ddd22631eF7bF528d424A14;
+        address demoBorrower = 0x025A5616B35bd7D0B79d14DA58fa3e34CEd8a3d0;
+        core.registerVerifiedSource(morphoSepolia);
+
+        // the borrower proves capital first (mirrors the live replay order)
+        _execute(0, 11_604_000, _depositTx(VAULT_ON_SEPOLIA, demoBorrower, 0.027 ether, 1));
+
+        LogTuple[] memory logs = new LogTuple[](1);
+        logs[0].address_ = morphoSepolia;
+        logs[0].topics = new bytes32[](4);
+        logs[0].topics[0] = 0x52acb05cebbd3cd39715469f22afbf5a17496295ef3bc9bb5944056c63ccaa09;
+        logs[0].topics[1] = 0x8db3b66308de899b5dd81c0a9de5b423fbc8fe287e2f7d72e3b1e73250eaf722; // marketId
+        logs[0].topics[2] = 0x000000000000000000000000025a5616b35bd7d0b79d14da58fa3e34ced8a3d0; // caller
+        logs[0].topics[3] = 0x000000000000000000000000025a5616b35bd7d0b79d14da58fa3e34ced8a3d0; // onBehalf
+        logs[0].data =
+            hex"0000000000000000000000000000000000000000000000000000000002faf08000000000000000000000000000000000000000000000000000002d79883d2000";
+        _execute(6, 11_604_843, _encodeTx(1, logs));
+
+        // 50e6 tUSDC clears the dust floor by 5000× → flat +0.1 discipline
+        assertEq(_discipline(demoBorrower), core.EXTERNAL_REPAY_FLAT_SCORE());
+        // 0.027 proven capital ≥ 0.015 gate → the discipline counts
+        assertEq(core.effectiveScoreOf(demoBorrower), 0.027 ether + 0.1 ether);
+    }
+
+    // ---------- v4 dust-repay floor ----------
+
+    function test_disciplineDustFloor() public {
+        _proveDeposit(1 ether, 950);
+
+        // below the floor: verifies, emits, zero credit
+        _execute(1, 951, _repayOnEthTx(LOANBOOK_ON_SEPOLIA, bob, 1, core.minDisciplineEventAmount() - 1));
+        assertEq(_discipline(bob), 0);
+
+        // at the floor: credited (amount + flat bonus)
+        uint256 floor = core.minDisciplineEventAmount();
+        _execute(1, 952, _repayOnEthTx(LOANBOOK_ON_SEPOLIA, bob, 2, floor));
+        assertEq(_discipline(bob), floor + core.FLAT_REPAYMENT_BONUS());
+
+        // external repays respect the same floor (Morpho, 1-wei dust repay)
+        core.registerVerifiedSource(MORPHO);
+        _execute(6, 953, _morphoRepayTx(MORPHO, bob, bob, 1));
+        assertEq(_discipline(bob), floor + core.FLAT_REPAYMENT_BONUS());
+
+        // the floor is an owner knob (an enumerated owner power)
+        core.setMinDisciplineEventAmount(1e6);
+        _execute(1, 954, _repayOnEthTx(LOANBOOK_ON_SEPOLIA, bob, 3, 1e4));
+        assertEq(_discipline(bob), floor + core.FLAT_REPAYMENT_BONUS()); // unchanged
+
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", bob));
+        core.setMinDisciplineEventAmount(1);
     }
 }

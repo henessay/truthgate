@@ -171,9 +171,44 @@ echo "   WrappedUSDC (from the RepaymentBridge constructor) = $WUSDC"
 ensure "LPPool.setCreditCore($CORE)"                    "$POOL"   "creditCore()(address)"    "setCreditCore(address)"           "$CORE"
 ensure "LPPool.setBridge($BRIDGE)"                      "$POOL"   "bridge()(address)"        "setBridge(address)"               "$BRIDGE"
 ensure "CreditCore.setRepaymentBridge($BRIDGE)"         "$CORE"   "repaymentBridge()(address)" "setRepaymentBridge(address)"    "$BRIDGE"
-ensure "CreditCore.registerVaultOnSepolia($SCORING_VAULT)"   "$CORE"   "vaultOnSepolia()(address)"    "registerVaultOnSepolia(address)"    "$SCORING_VAULT"
-ensure "CreditCore.registerLoanBookOnSepolia($LOAN_BOOK)"    "$CORE"   "loanBookOnSepolia()(address)" "registerLoanBookOnSepolia(address)" "$LOAN_BOOK"
 ensure "RepaymentBridge.registerRepaymentVault($REPAYMENT_VAULT)" "$BRIDGE" "repaymentVaultOnSepolia()(address)" "registerRepaymentVault(address)" "$REPAYMENT_VAULT"
+
+# --- 2b. v4 tiered source registry ------------------------------------------
+# Canonical external protocol singletons on Sepolia (identities recorded in
+# docs/protocol-registry.json: Morpho per docs.morpho.org; Aave resolved from
+# its AddressesProvider 0x012bAC54348C0E635dCAc9D5FB99f06F24136C9A).
+MORPHO_SEPOLIA=0xd011EE229E7459ba1ddd22631eF7bF528d424A14
+AAVE_POOL_SEPOLIA=0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951
+# LoanBookSim demotes to BONDED with a real stake — it is no longer silently
+# trusted. 10 CTC covers the demo replay's attribution (repay-sim 3.5 +
+# liquidation damage 3.0 = 6.5 limit-units) with headroom.
+LOANBOOK_BOND_WEI=10000000000000000000
+
+# source_tier <addr> → prints the tier enum value (0 Unknown / 1 Bonded / 2 Verified)
+source_tier() {
+    cast call "$CORE" "sources(address)(uint8,uint256,uint256)" "$1" "${RPC[@]}" | sed -n 1p
+}
+
+# ensure_verified <label> <addr> — idempotent registerVerifiedSource
+ensure_verified() {
+    local label=$1 addr=$2
+    if [[ "$(source_tier "$addr")" == "2" ]]; then
+        echo "-- $label: already Verified, skipping"
+        return
+    fi
+    send "CreditCore.registerVerifiedSource($label)" "$CORE" "registerVerifiedSource(address)" "$addr"
+}
+
+ensure_verified "ScoringVault $SCORING_VAULT"        "$SCORING_VAULT"
+ensure_verified "MorphoBlueSepolia $MORPHO_SEPOLIA"  "$MORPHO_SEPOLIA"
+ensure_verified "AavePoolSepolia $AAVE_POOL_SEPOLIA" "$AAVE_POOL_SEPOLIA"
+
+if [[ "$(source_tier "$LOAN_BOOK")" == "1" ]]; then
+    echo "-- LoanBookSim: already Bonded, skipping"
+else
+    send "CreditCore.registerBondedSource(LoanBookSim, $(cast from-wei "$LOANBOOK_BOND_WEI") CTC)" \
+        "$CORE" "registerBondedSource(address)" "$LOAN_BOOK" --value "$LOANBOOK_BOND_WEI"
+fi
 
 if [[ -n "${MIN_ACCEPTED_HEIGHT:-}" ]]; then
     ensure "CreditCore.setMinAcceptedHeight($MIN_ACCEPTED_HEIGHT)"      "$CORE"   "minAcceptedHeight()(uint64)" "setMinAcceptedHeight(uint64)" "$MIN_ACCEPTED_HEIGHT"
@@ -200,8 +235,29 @@ check "LPPool.creditCore"                    "$POOL"   "creditCore()(address)"  
 check "LPPool.bridge"                        "$POOL"   "bridge()(address)"                  "$BRIDGE"
 check "CreditCore.POOL"                      "$CORE"   "POOL()(address)"                    "$POOL"
 check "CreditCore.repaymentBridge"           "$CORE"   "repaymentBridge()(address)"         "$BRIDGE"
-check "CreditCore.vaultOnSepolia"            "$CORE"   "vaultOnSepolia()(address)"          "$SCORING_VAULT"
-check "CreditCore.loanBookOnSepolia"         "$CORE"   "loanBookOnSepolia()(address)"       "$LOAN_BOOK"
+
+# check_tier <description> <addr> <expected tier enum value>
+check_tier() {
+    local desc=$1 addr=$2 expected=$3 actual
+    actual="$(source_tier "$addr")"
+    if [[ "$actual" == "$expected" ]]; then
+        VERIFIED+=("$desc tier = $actual")
+    else
+        echo "MISMATCH: $desc — expected tier $expected, on-chain $actual" >&2
+        FAILED=1
+    fi
+}
+check_tier "sources[ScoringVault]"       "$SCORING_VAULT"      2
+check_tier "sources[MorphoBlueSepolia]"  "$MORPHO_SEPOLIA"     2
+check_tier "sources[AavePoolSepolia]"    "$AAVE_POOL_SEPOLIA"  2
+check_tier "sources[LoanBookSim]"        "$LOAN_BOOK"          1
+LOANBOOK_BOND_ONCHAIN="$(cast call "$CORE" "sources(address)(uint8,uint256,uint256)" "$LOAN_BOOK" "${RPC[@]}" | sed -n 2p | awk '{print $1}')"
+if [[ "$LOANBOOK_BOND_ONCHAIN" == "$LOANBOOK_BOND_WEI" ]]; then
+    VERIFIED+=("sources[LoanBookSim].bond = $(cast from-wei "$LOANBOOK_BOND_ONCHAIN") CTC")
+else
+    echo "MISMATCH: LoanBookSim bond — expected $LOANBOOK_BOND_WEI, on-chain $LOANBOOK_BOND_ONCHAIN" >&2
+    FAILED=1
+fi
 check "RepaymentBridge.CREDIT_CORE"          "$BRIDGE" "CREDIT_CORE()(address)"             "$CORE"
 check "RepaymentBridge.POOL"                 "$BRIDGE" "POOL()(address)"                    "$POOL"
 check "RepaymentBridge.repaymentVaultOnSepolia" "$BRIDGE" "repaymentVaultOnSepolia()(address)" "$REPAYMENT_VAULT"

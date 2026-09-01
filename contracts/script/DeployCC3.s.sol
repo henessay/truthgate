@@ -30,8 +30,11 @@ contract DeployCC3 is Script {
         pool.setBridge(address(bridge));
         core.setRepaymentBridge(address(bridge));
 
-        core.registerVaultOnSepolia(scoringVault);
-        core.registerLoanBookOnSepolia(loanBook);
+        // v4 tiered registry: the vault is Verified; the loan-book sim is BONDED
+        // with a real stake (see deploy-cc3.sh — the executable script — for the
+        // full v4 registration set, including the external protocol singletons)
+        core.registerVerifiedSource(scoringVault);
+        core.registerBondedSource{value: 10 ether}(loanBook);
         bridge.registerRepaymentVault(repaymentVault);
         vm.stopBroadcast();
 
