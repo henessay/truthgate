@@ -1,14 +1,40 @@
 import { Contract, EventLog, JsonRpcProvider } from 'ethers';
-import { CONFIG, type Deployments } from './config.js';
+import { CONFIG, WORKER_ADDRESS, type Deployments } from './config.js';
 import { log } from './logger.js';
-import { EVENT_ROUTES, LOAN_BOOK_ABI, REPAYMENT_VAULT_ABI, SCORING_VAULT_ABI } from './abi.js';
+import {
+  AAVE_POOL_ABI,
+  EVENT_ROUTES,
+  EXTERNAL_SOURCES,
+  LOAN_BOOK_ABI,
+  MORPHO_BLUE_ABI,
+  REPAYMENT_VAULT_ABI,
+  SCORING_VAULT_ABI,
+} from './abi.js';
 import type { PendingEvent, WorkerState } from './state.js';
 
-interface WatchedContract {
-  name: keyof typeof EVENT_ROUTES extends never ? never : string;
+export interface WatchedContract {
+  name: string;
   contract: Contract;
-  eventName: keyof typeof EVENT_ROUTES;
+  /** The Solidity event name — what ethers filters and parses by. */
+  eventName: string;
+  /** The EVENT_ROUTES key — distinct even when event names collide
+   * (Aave and Morpho both emit "Repay"). */
+  routeKey: keyof typeof EVENT_ROUTES;
   argNames: string[];
+  /** If set, only events whose named argument equals WORKER_ADDRESS are queued.
+   * External singletons (Aave, Morpho) carry public traffic; proving a
+   * stranger's repay costs this worker CC3 gas for someone else's score. The
+   * CONTRACT accepts any subject — this is worker-side gas economics, not a
+   * protocol restriction (and matches identity v1: one EOA everywhere). */
+  subjectArg?: string;
+}
+
+/** True when the event passes the entry's subject filter (or there is none). */
+export function matchesSubject(w: WatchedContract, ev: EventLog): boolean {
+  if (!w.subjectArg) return true;
+  const idx = w.argNames.indexOf(w.subjectArg);
+  if (idx < 0) return true;
+  return String(ev.args[idx]).toLowerCase() === WORKER_ADDRESS.toLowerCase();
 }
 
 /**
@@ -57,18 +83,21 @@ export function buildWatchedContracts(provider: JsonRpcProvider, d: Deployments)
       name: 'ScoringVault',
       contract: new Contract(d.sepolia.ScoringVault, SCORING_VAULT_ABI, provider),
       eventName: 'FundsDeposited',
+      routeKey: 'FundsDeposited',
       argNames: ['depositor', 'amount', 'nonce'],
     },
     {
       name: 'LoanBookSim',
       contract: new Contract(d.sepolia.LoanBookSim, LOAN_BOOK_ABI, provider),
       eventName: 'LoanRepaidOnEth',
+      routeKey: 'LoanRepaidOnEth',
       argNames: ['borrower', 'loanId', 'amount'],
     },
     {
       name: 'LoanBookSim',
       contract: new Contract(d.sepolia.LoanBookSim, LOAN_BOOK_ABI, provider),
       eventName: 'LiquidationCall',
+      routeKey: 'LiquidationCall',
       argNames: [
         'collateralAsset',
         'debtAsset',
@@ -79,17 +108,36 @@ export function buildWatchedContracts(provider: JsonRpcProvider, d: Deployments)
         'receiveAToken',
       ],
     },
+    // v4: external protocol singletons (Verified tier on CreditCore). Both emit
+    // an event named "Repay" — the distinct routeKey carries the action number.
+    {
+      name: 'AavePoolSepolia',
+      contract: new Contract(EXTERNAL_SOURCES.AavePoolSepolia, AAVE_POOL_ABI, provider),
+      eventName: 'Repay',
+      routeKey: 'AaveRepay',
+      argNames: ['reserve', 'user', 'repayer', 'amount', 'useATokens'],
+      subjectArg: 'user',
+    },
+    {
+      name: 'MorphoBlueSepolia',
+      contract: new Contract(EXTERNAL_SOURCES.MorphoBlueSepolia, MORPHO_BLUE_ABI, provider),
+      eventName: 'Repay',
+      routeKey: 'MorphoRepay',
+      argNames: ['id', 'caller', 'onBehalf', 'assets', 'shares'],
+      subjectArg: 'onBehalf',
+    },
     {
       name: 'RepaymentVault',
       contract: new Contract(d.sepolia.RepaymentVault, REPAYMENT_VAULT_ABI, provider),
       eventName: 'UsdcLockedForRepayment',
+      routeKey: 'UsdcLockedForRepayment',
       argNames: ['borrower', 'ccLoanId', 'amount'],
     },
   ];
 }
 
-export function toPendingEvent(ev: EventLog, eventName: keyof typeof EVENT_ROUTES, argNames: string[]): PendingEvent {
-  const route = EVENT_ROUTES[eventName];
+export function toPendingEvent(ev: EventLog, routeKey: keyof typeof EVENT_ROUTES, argNames: string[]): PendingEvent {
+  const route = EVENT_ROUTES[routeKey];
   const args: Record<string, string> = {};
   argNames.forEach((n, i) => (args[n] = String(ev.args[i])));
 
@@ -99,7 +147,9 @@ export function toPendingEvent(ev: EventLog, eventName: keyof typeof EVENT_ROUTE
     logIndex: ev.index,
     blockNumber: ev.blockNumber,
     source: route.source,
-    eventName,
+    // PendingEvent.eventName carries the ROUTE key (unambiguous), not the
+    // possibly-colliding Solidity event name
+    eventName: routeKey,
     args,
     target: route.target,
     action: route.action,
@@ -159,7 +209,8 @@ export async function pollOnce(
         const events = await w.contract.queryFilter(w.eventName, from, to);
         for (const ev of events) {
           if (!(ev instanceof EventLog)) continue;
-          const pending = toPendingEvent(ev, w.eventName, w.argNames);
+          if (!matchesSubject(w, ev)) continue;
+          const pending = toPendingEvent(ev, w.routeKey, w.argNames);
           if (known.has(pending.key)) continue;
 
           known.add(pending.key);

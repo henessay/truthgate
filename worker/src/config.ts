@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Wallet } from 'ethers';
 import dotenv from 'dotenv';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -80,3 +81,7 @@ export const CONFIG = {
   stateFile: resolve(WORKER_DIR, process.env.WORKER_STATE_FILE ?? 'state.json'),
   failedFile: resolve(WORKER_DIR, 'failed.json'),
 } as const;
+
+/** The worker's own address (identity v1: deployer == borrower == worker).
+ * External-protocol watchers filter by it — see watcher.ts subjectArg. */
+export const WORKER_ADDRESS = new Wallet(CONFIG.privateKey).address;

@@ -156,7 +156,7 @@ async function replay(txHash: string): Promise<void> {
       pending.push(
         toPendingEvent(
           new EventLog(l, w.contract.interface, w.contract.interface.getEvent(w.eventName)!),
-          w.eventName,
+          w.routeKey,
           w.argNames,
         ),
       );

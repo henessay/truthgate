@@ -1,7 +1,12 @@
 import { readFileSync, writeFileSync, renameSync, existsSync, rmSync, statSync } from 'node:fs';
 import { CONFIG } from './config.js';
 
-export type EventSource = 'ScoringVault' | 'LoanBookSim' | 'RepaymentVault';
+export type EventSource =
+  | 'ScoringVault'
+  | 'LoanBookSim'
+  | 'RepaymentVault'
+  | 'AavePoolSepolia'
+  | 'MorphoBlueSepolia';
 export type TargetContract = 'CreditCore' | 'RepaymentBridge';
 
 export interface PendingEvent {

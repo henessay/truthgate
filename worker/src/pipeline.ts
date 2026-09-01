@@ -148,8 +148,8 @@ async function submitProof(
     throw err;
   }
 
-  // Finalization: look for the target event
-  // (EthScoreIncreased / LiquidationPenaltyApplied / UsdcRepaymentProcessed)
+  // Finalization: look for the target event (EthScoreIncreased /
+  // DisciplineScoreIncreased / LiquidationPenaltyApplied / UsdcRepaymentProcessed)
   let queryId: string | undefined;
   for (const l of receipt.logs) {
     try {
@@ -157,6 +157,7 @@ async function submitProof(
       if (
         parsed &&
         (parsed.name === 'EthScoreIncreased' ||
+          parsed.name === 'DisciplineScoreIncreased' ||
           parsed.name === 'LiquidationPenaltyApplied' ||
           parsed.name === 'UsdcRepaymentProcessed')
       ) {
