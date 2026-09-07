@@ -76,9 +76,14 @@ export function BorrowerScreen() {
               )}
             </div>
           )}
-          {overview.data?.creditLimit === 0n && (
-            <div className="limit-breakdown">score below minimum — prove a deposit on Sepolia</div>
-          )}
+          {overview.data?.creditLimit === 0n &&
+            (proofCount.data === 0 ? (
+              <div className="limit-breakdown">
+                No proven history yet — deposit on Sepolia to start building your file.
+              </div>
+            ) : (
+              <div className="limit-breakdown">score below minimum — prove a deposit on Sepolia</div>
+            ))}
           {overview.data && !overview.data.capitalGatePassed && overview.data.disciplineScore > 0n && (
             <div className="limit-breakdown" style={{ color: 'var(--amber)' }}>
               discipline {fmtCtc(overview.data.disciplineScore)} gated — prove capital ≥{' '}
@@ -139,7 +144,7 @@ export function BorrowerScreen() {
 }
 
 function BorrowCard({ maxAmount }: { maxAmount: bigint }) {
-  const { address, hasWallet, connecting, connect } = useWallet();
+  const { address, hasWallet, connecting, connect, wrongChain } = useWallet();
   const borrow = useBorrow();
   const [amount, setAmount] = useState('');
 
@@ -148,9 +153,11 @@ function BorrowCard({ maxAmount }: { maxAmount: bigint }) {
     ? hasWallet
       ? 'Connect a wallet to borrow'
       : 'Install MetaMask to act'
-    : !parsedOk
-      ? 'Enter an amount in CTC'
-      : null;
+    : wrongChain
+      ? 'Switch the wallet back to CC3'
+      : !parsedOk
+        ? 'Enter an amount in CTC'
+        : null;
 
   return (
     <div className="neo-card borrow-card">
@@ -208,7 +215,7 @@ function LoanTable({
   headBlock: bigint;
   deliveries: Record<string, PathBDelivery>;
 }) {
-  const { address } = useWallet();
+  const { address, wrongChain } = useWallet();
   const repay = useRepay();
 
   return (
@@ -279,8 +286,14 @@ function LoanTable({
                 {open && (
                   <button
                     className="flat-btn"
-                    disabled={!address || repay.isPending}
-                    title={address ? `Repay outstanding ${fmtCtc(l.outstanding)} CTC` : 'Connect a wallet'}
+                    disabled={!address || wrongChain || repay.isPending}
+                    title={
+                      !address
+                        ? 'Connect a wallet'
+                        : wrongChain
+                          ? 'Switch the wallet back to CC3'
+                          : `Repay outstanding ${fmtCtc(l.outstanding)} CTC`
+                    }
                     onClick={() => repay.mutate({ loanId: l.id, outstanding: l.outstanding })}
                   >
                     {repayingThis ? 'Transaction…' : 'Repay'}
