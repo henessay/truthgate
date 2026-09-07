@@ -27,9 +27,10 @@ const CC3_CHAIN_PARAMS = {
   blockExplorerUrls: ['https://creditcoin-testnet.blockscout.com'],
 };
 
-interface Eip1193 {
+export interface Eip1193 {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
   on?(event: string, cb: (...args: unknown[]) => void): void;
+  removeListener?(event: string, cb: (...args: unknown[]) => void): void;
 }
 
 export function injectedWallet(): Eip1193 | null {
@@ -101,6 +102,16 @@ export async function connectWallet(): Promise<{ signer: JsonRpcSigner; address:
   await eth.request({ method: 'eth_requestAccounts' });
   await ensureCc3Chain(eth);
 
+  const browser = new BrowserProvider(eth as never, CC3_CHAIN_ID);
+  const signer = await browser.getSigner();
+  return { signer, address: await signer.getAddress() };
+}
+
+/**
+ * Signer for the wallet's currently selected account, without prompting
+ * (no eth_requestAccounts / chain switch). Used to follow accountsChanged.
+ */
+export async function signerFromInjected(eth: Eip1193): Promise<{ signer: JsonRpcSigner; address: string }> {
   const browser = new BrowserProvider(eth as never, CC3_CHAIN_ID);
   const signer = await browser.getSigner();
   return { signer, address: await signer.getAddress() };
