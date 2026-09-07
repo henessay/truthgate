@@ -1,0 +1,21 @@
+.swap { display: flex; flex-direction: column; gap: 24px; }
+
+.swap-bottom {
+  display: grid;
+  grid-template-columns: minmax(280px, 380px) 1fr;
+  gap: 24px;
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .swap-bottom { grid-template-columns: 1fr; }
+}
+
+.swap-form { display: flex; flex-direction: column; gap: 12px; }
+.swap-form h2 { font-size: 16px; }
+.swap-blurb { font-size: 13px; margin: 0; line-height: 1.45; }
+.swap-form .neo-input { width: 100%; }
+.swap-quote { margin: 0; font-size: 13.5px; }
+.swap-quote b { color: var(--accent); }
+
+.swap-history { display: flex; flex-direction: column; gap: 10px; }
+.swap-history h2 { font-size: 17px; }

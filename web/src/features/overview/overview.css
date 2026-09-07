@@ -1,0 +1,45 @@
+.overview { display: flex; flex-direction: column; gap: 24px; }
+
+.overview-top {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) 1fr;
+  gap: 24px;
+}
+@media (max-width: 860px) {
+  .overview-top { grid-template-columns: 1fr; }
+}
+
+.gauge-card { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.gauge { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%; }
+.gauge-svg { width: 100%; max-width: 260px; }
+.gauge-num {
+  font-size: 40px;
+  font-weight: 600;
+  fill: var(--text);
+  font-family: inherit;
+}
+.gauge-sub { font-size: 12px; fill: var(--text-faint); }
+.gauge-caption { font-size: 12.5px; color: var(--text-dim); text-align: center; }
+
+.comp-card { display: flex; flex-direction: column; gap: 12px; }
+.comp-row {
+  display: grid;
+  grid-template-columns: 110px 70px 1fr;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+.comp-row .badge { text-align: center; }
+.gate-ok { color: var(--green); font-weight: 600; }
+.gate-warn { color: var(--amber); font-size: 13px; }
+
+.negative-strip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 20px;
+}
+.negative-strip .stat-title { margin: 0; }
+
+.records-section { display: flex; flex-direction: column; gap: 10px; }
+.records-section h2 { font-size: 17px; }

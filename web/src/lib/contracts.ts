@@ -1,4 +1,4 @@
-import { Contract, type ContractRunner } from 'ethers';
+import { Contract, zeroPadValue, type ContractRunner } from 'ethers';
 import deployments from '../../../docs/deployments.json';
 import CreditCoreAbi from './abi/CreditCore.json';
 import RepaymentBridgeAbi from './abi/RepaymentBridge.json';
@@ -68,6 +68,10 @@ export interface BorrowerOverview {
   fromLocalScore: bigint;
   /** Limit reduction from proven liquidations, clamped to the earned bonus (never eats the base). */
   liquidationPenalty: bigint;
+  /** capital + gated discipline — the score the limit slope runs over. */
+  effectiveScore: bigint;
+  /** DEPOSIT_SCORE_CAP + DISCIPLINE_SCORE_CAP — the on-chain maximum of effectiveScore (gauge denominator). */
+  scoreCapTotal: bigint;
 }
 
 /** Block shortly before the CC3 contracts were deployed — lower bound for queryFilters.
@@ -94,12 +98,44 @@ export async function fetchPoolStats(): Promise<PoolStats> {
   return { balance, totalAssets, totalShares, sharePrice, outstandingPrincipal };
 }
 
+/** The public CC3 RPC enforces a 10 s timeout on eth_getLogs and scans ~2k blocks/s
+ * (measured: 20k blocks times out, 2.7k takes 1.3 s) — the deploy→head span must be
+ * walked in small windows. Concurrency is capped at 3 so a burst of parallel windows
+ * (ethers batches them into one JSON-RPC batch) can't pile past the node's timeout. */
+const LOG_CHUNK_BLOCKS = 5_000;
+const LOG_WALK_CONCURRENCY = 3;
+
+async function walkWindows<T>(fromBlock: number, fetchWindow: (from: number, to: number) => Promise<T[]>): Promise<T[]> {
+  const head = await cc3Provider.getBlockNumber();
+  const windows: [number, number][] = [];
+  for (let f = fromBlock; f <= head; f += LOG_CHUNK_BLOCKS) {
+    windows.push([f, Math.min(f + LOG_CHUNK_BLOCKS - 1, head)]);
+  }
+  const results: T[][] = new Array(windows.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(LOG_WALK_CONCURRENCY, windows.length) }, async () => {
+      while (next < windows.length) {
+        const idx = next++;
+        results[idx] = await fetchWindow(windows[idx][0], windows[idx][1]);
+      }
+    }),
+  );
+  return results.flat();
+}
+
+type QueryFilterArgs = Parameters<Contract['queryFilter']>;
+
+function chunkedQueryFilter(contract: Contract, filter: QueryFilterArgs[0], fromBlock: number) {
+  return walkWindows(fromBlock, (from, to) => contract.queryFilter(filter, from, to));
+}
+
 /** How many Sepolia transactions were proven into the borrower's score
  * (EthScoreIncreased = capital + DisciplineScoreIncreased = discipline, v4). */
 export async function fetchScoreProofCount(address: string): Promise<number> {
   const [capital, discipline] = await Promise.all([
-    creditCore.queryFilter(creditCore.filters.EthScoreIncreased(address), CC3_DEPLOY_BLOCK),
-    creditCore.queryFilter(creditCore.filters.DisciplineScoreIncreased(address), CC3_DEPLOY_BLOCK),
+    chunkedQueryFilter(creditCore, creditCore.filters.EthScoreIncreased(address), CC3_DEPLOY_BLOCK),
+    chunkedQueryFilter(creditCore, creditCore.filters.DisciplineScoreIncreased(address), CC3_DEPLOY_BLOCK),
   ]);
   return capital.length + discipline.length;
 }
@@ -111,7 +147,8 @@ export interface PathBDelivery {
 
 /** Repayments delivered through the bridge, per loan: ccLoanId → {count, CC3 tx hash}. */
 export async function fetchPathBDeliveries(): Promise<Record<string, PathBDelivery>> {
-  const logs = await repaymentBridge.queryFilter(
+  const logs = await chunkedQueryFilter(
+    repaymentBridge,
     repaymentBridge.filters.UsdcRepaymentProcessed(),
     CC3_DEPLOY_BLOCK,
   );
@@ -125,7 +162,7 @@ export async function fetchPathBDeliveries(): Promise<Record<string, PathBDelive
 }
 
 export async function fetchBorrowerOverview(address: string): Promise<BorrowerOverview> {
-  const [borrowerRow, creditLimit, effectiveScore, depositScore, gateThreshold, baseLimit, minEth, slopeNum, slopeDen, localK] =
+  const [borrowerRow, creditLimit, effectiveScore, depositScore, gateThreshold, baseLimit, minEth, slopeNum, slopeDen, localK, capitalCap, disciplineCap] =
     await Promise.all([
       creditCore.borrowers(address) as Promise<bigint[]>,
       creditCore.creditLimit(address) as Promise<bigint>,
@@ -137,6 +174,8 @@ export async function fetchBorrowerOverview(address: string): Promise<BorrowerOv
       creditCore.SCORE_SLOPE_NUM() as Promise<bigint>,
       creditCore.SCORE_SLOPE_DEN() as Promise<bigint>,
       creditCore.LOCAL_SCORE_K() as Promise<bigint>,
+      creditCore.DEPOSIT_SCORE_CAP() as Promise<bigint>,
+      creditCore.DISCIPLINE_SCORE_CAP() as Promise<bigint>,
     ]);
 
   const [ethScore, localScore, openDebt, loansCompleted] = borrowerRow;
@@ -174,6 +213,8 @@ export async function fetchBorrowerOverview(address: string): Promise<BorrowerOv
     fromDiscipline,
     fromLocalScore,
     liquidationPenalty,
+    effectiveScore,
+    scoreCapTotal: capitalCap + disciplineCap,
   };
 }
 
@@ -211,4 +252,153 @@ export async function fetchLoans(address: string): Promise<LoanView[]> {
   );
 
   return rows.filter((l) => l.borrower.toLowerCase() === address.toLowerCase());
+}
+
+// ---------- Overview: the proven-record file ----------
+
+export type ScoreRecordKind = 'capital' | 'discipline' | 'negative';
+
+export interface ScoreRecord {
+  kind: ScoreRecordKind;
+  /** Human name of the proven source protocol (decoded from the delivery tx's action id). */
+  source: string;
+  /** Score delta (capital/discipline) or penalty (negative), 1e18 units. */
+  delta: bigint;
+  /** Negative only: debt covered by the liquidator in the proven LiquidationCall. */
+  debtToCover?: bigint;
+  queryId: string;
+  cc3TxHash: string;
+  blockNumber: number;
+}
+
+/** ScoreActions enum in CreditCore.sol — action id → source protocol shown in the file. */
+const ACTION_SOURCE: Record<number, string> = {
+  0: 'ScoringVault deposit',
+  1: 'LoanBookSim repayment',
+  2: 'Aave-style liquidation',
+  3: 'Rocket Pool deposit',
+  4: 'EigenLayer restake',
+  5: 'Aave v3 repay',
+  6: 'Morpho Blue repay',
+};
+
+const KIND_FALLBACK: Record<ScoreRecordKind, string> = {
+  capital: 'proven deposit',
+  discipline: 'proven repayment',
+  negative: 'proven liquidation',
+};
+
+/**
+ * The borrower's full proven-record file: every score event with its delivery tx
+ * and the source protocol recovered from execute(action, …) calldata.
+ * Demo scale: a handful of events, one getTransaction per unique delivery tx.
+ */
+export async function fetchScoreRecords(address: string): Promise<ScoreRecord[]> {
+  // All three events index the borrower as topic[1] — one OR-topics walk instead of three
+  const iface = creditCore.interface;
+  const kindBySig = new Map<string, ScoreRecordKind>([
+    [iface.getEvent('EthScoreIncreased')!.topicHash, 'capital'],
+    [iface.getEvent('DisciplineScoreIncreased')!.topicHash, 'discipline'],
+    [iface.getEvent('LiquidationPenaltyApplied')!.topicHash, 'negative'],
+  ]);
+  const logs = await walkWindows(CC3_DEPLOY_BLOCK, (fromBlock, toBlock) =>
+    cc3Provider.getLogs({
+      address: ADDR.cc3.CreditCore,
+      fromBlock,
+      toBlock,
+      topics: [[...kindBySig.keys()], zeroPadValue(address, 32)],
+    }),
+  );
+
+  const tagged = logs.flatMap((log) => {
+    const kind = kindBySig.get(log.topics[0]);
+    const parsed = iface.parseLog({ topics: [...log.topics], data: log.data });
+    if (!kind || !parsed) return [];
+    return [{ kind, log, args: parsed.args.toObject() as Record<string, unknown> }];
+  });
+
+  // Source protocol lives in the delivery tx calldata: execute(uint8 action, …)
+  const txHashes = [...new Set(tagged.map((t) => t.log.transactionHash))];
+  const actionByTx = new Map<string, number>();
+  await Promise.all(
+    txHashes.map(async (hash) => {
+      try {
+        const tx = await cc3Provider.getTransaction(hash);
+        if (!tx) return;
+        const parsed = creditCore.interface.parseTransaction({ data: tx.data });
+        if (parsed?.name === 'execute') actionByTx.set(hash, Number(parsed.args[0]));
+      } catch {
+        // leave unmapped — the record falls back to a generic source label
+      }
+    }),
+  );
+
+  return tagged
+    .map(({ kind, log, args }) => {
+      const action = actionByTx.get(log.transactionHash);
+      return {
+        kind,
+        source: (action !== undefined && ACTION_SOURCE[action]) || KIND_FALLBACK[kind],
+        delta: (kind === 'negative' ? args.penalty : args.delta) as bigint,
+        debtToCover: kind === 'negative' ? (args.debtToCover as bigint) : undefined,
+        queryId: args.queryId as string,
+        cc3TxHash: log.transactionHash,
+        blockNumber: log.blockNumber,
+      } satisfies ScoreRecord;
+    })
+    .sort((a, b) => b.blockNumber - a.blockNumber);
+}
+
+// ---------- SwapDesk: bridge treasury → CTC ----------
+
+export interface SwapDeskState {
+  /** wUSDC held by the bridge treasury (18-dec, = principalFace + interestFace). */
+  treasuryWusdc: bigint;
+  /** Face value attributed to loan principal (owed to the pool via settle). */
+  principalFace: bigint;
+  /** Face value attributed to interest margin — the discount is paid out of it. */
+  interestFace: bigint;
+  discountBps: bigint;
+  /** CTC per wUSDC ×1e18 (v1: 1e18 = 1:1). */
+  rate: bigint;
+}
+
+export async function fetchSwapDeskState(): Promise<SwapDeskState> {
+  const [treasuryWusdc, principalFace, interestFace, discountBps, rate] = await Promise.all([
+    wrappedUsdc.balanceOf(ADDR.cc3.RepaymentBridge) as Promise<bigint>,
+    repaymentBridge.treasuryPrincipalFace() as Promise<bigint>,
+    repaymentBridge.treasuryInterestFace() as Promise<bigint>,
+    repaymentBridge.DISCOUNT_BPS() as Promise<bigint>,
+    repaymentBridge.CTC_PER_WUSDC_RATE() as Promise<bigint>,
+  ]);
+  return { treasuryWusdc, principalFace, interestFace, discountBps, rate };
+}
+
+/** Exact integer replica of swapWusdcForCtc's price check — msg.value must equal this. */
+export function swapCtcRequired(wusdcAmount: bigint, state: SwapDeskState): bigint {
+  return (((wusdcAmount * state.rate) / 10n ** 18n) * (10_000n - state.discountBps)) / 10_000n;
+}
+
+export interface SwapRecord {
+  buyer: string;
+  wusdcAmount: bigint;
+  ctcPaid: bigint;
+  cc3TxHash: string;
+  blockNumber: number;
+}
+
+export async function fetchSwapHistory(): Promise<SwapRecord[]> {
+  const logs = await chunkedQueryFilter(repaymentBridge, repaymentBridge.filters.WusdcSwapped(), CC3_DEPLOY_BLOCK);
+  return logs
+    .map((log) => {
+      const args = (log as { args?: { buyer: string; wusdcAmount: bigint; ctcPaid: bigint } }).args;
+      return {
+        buyer: args?.buyer ?? '',
+        wusdcAmount: args?.wusdcAmount ?? 0n,
+        ctcPaid: args?.ctcPaid ?? 0n,
+        cc3TxHash: log.transactionHash,
+        blockNumber: log.blockNumber,
+      } satisfies SwapRecord;
+    })
+    .sort((a, b) => b.blockNumber - a.blockNumber);
 }
