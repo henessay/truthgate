@@ -175,6 +175,8 @@ Full transaction-level history (including three earlier generations of the core 
 | creditLimit | **6.67 CTC** | 5 (BASE) + (0.477 − 0.01)×10 − 3 ✓ |
 | sources[LoanBookSim] | Bonded, bond 10, attributed 6.5 | 3.5 (discipline×slope) + 3.0 (penalties) ≤ bond ✓ |
 
+Snapshot at v4 go-live; the live state evolves as the demo borrower keeps using credit — current values on the Overview screen.
+
 **Protections that fired on live networks** (details and worker-log timestamps in `live-run.md`):
 
 - **Anti-replay by queryId**: re-delivery of an already-processed lock — revert `Query already processed` (invariant #3).
