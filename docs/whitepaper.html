@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>TruthGate — An On-Chain Credit Bureau on the Attestcoin Protocol</title>
+<style>
+  @page {
+    size: A4;
+    margin: 22mm 18mm 20mm 18mm;
+    @bottom-center { content: counter(page); font-family: "Segoe UI", Inter, Arial, sans-serif; font-size: 9pt; color: #7a8494; }
+  }
+  @page :first { @bottom-center { content: none; } }
+
+  :root {
+    --ink: #17202c;
+    --dim: #4a5568;
+    --accent: #14427a;
+    --rule: #d8dde4;
+    --mono-bg: #f4f6f9;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 10.4pt;
+    line-height: 1.52;
+    color: var(--ink);
+    background: #ffffff;
+  }
+  h1, h2, h3 { font-family: "Segoe UI", Inter, Arial, sans-serif; color: var(--accent); line-height: 1.25; }
+  h1 { font-size: 17pt; margin: 0 0 10pt; padding-bottom: 6pt; border-bottom: 2px solid var(--accent); break-after: avoid; }
+  h2 { font-size: 12.5pt; margin: 14pt 0 6pt; break-after: avoid; }
+  h3 { font-size: 11pt; margin: 12pt 0 4pt; color: var(--ink); break-after: avoid; }
+  p { margin: 0 0 7pt; }
+  ul, ol { margin: 0 0 7pt; padding-left: 18pt; }
+  li { margin-bottom: 3pt; }
+  strong { color: var(--ink); }
+  em { color: inherit; }
+  code, .mono {
+    font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+    font-size: 8.9pt;
+    background: var(--mono-bg);
+    padding: 0.5pt 3pt;
+    border-radius: 2pt;
+    word-break: break-all;
+  }
+  pre {
+    font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+    font-size: 8.9pt;
+    background: var(--mono-bg);
+    border: 1px solid var(--rule);
+    border-radius: 3pt;
+    padding: 7pt 9pt;
+    margin: 0 0 8pt;
+    white-space: pre-wrap;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 6pt 0 10pt;
+    font-size: 8.8pt;
+    font-family: "Segoe UI", Inter, Arial, sans-serif;
+  }
+  th {
+    text-align: left;
+    font-size: 8.2pt;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--dim);
+    border-bottom: 1.5px solid var(--accent);
+    padding: 3pt 6pt 3pt 0;
+  }
+  td { border-bottom: 1px solid var(--rule); padding: 3.5pt 6pt 3.5pt 0; vertical-align: top; }
+  td code { background: none; padding: 0; }
+  tr { break-inside: avoid; }
+  .num { font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace; font-size: 8.6pt; }
+
+  section.page { break-before: page; }
+  .keep { break-inside: avoid; }
+
+  /* ---------- cover ---------- */
+  .cover { display: flex; flex-direction: column; height: 240mm; }
+  .cover-brand {
+    font-family: "Segoe UI", Inter, Arial, sans-serif;
+    font-size: 11pt; letter-spacing: 0.24em; text-transform: uppercase; color: var(--dim);
+    margin-top: 28mm;
+  }
+  .cover h1.cover-title {
+    font-size: 27pt; border: none; color: var(--ink); margin: 10mm 0 0; padding: 0; font-weight: 650;
+  }
+  .cover .cover-sub { font-size: 15pt; color: var(--accent); font-family: "Segoe UI", Inter, Arial, sans-serif; margin-top: 4mm; }
+  .cover .thesis {
+    margin-top: 14mm; font-size: 13pt; font-style: italic; color: var(--ink);
+    border-left: 3px solid var(--accent); padding-left: 6mm;
+  }
+  .cover .cover-meta { margin-top: auto; font-family: "Segoe UI", Inter, Arial, sans-serif; font-size: 9.5pt; color: var(--dim); }
+  .cover .cover-meta div { margin-bottom: 2.5pt; }
+  .cover .cover-meta a { color: var(--accent); text-decoration: none; }
+  a { color: var(--accent); text-decoration: none; }
+
+  .foot-rule { border: none; border-top: 1px solid var(--rule); margin: 12pt 0; }
+  .small { font-size: 8.8pt; color: var(--dim); }
+</style>
+</head>
+<body>
+
+<!-- ============================ 1 · COVER ============================ -->
+<div class="cover">
+  <div class="cover-brand">Whitepaper · Creditcoin CC3 × Ethereum · USC</div>
+  <h1 class="cover-title">TruthGate</h1>
+  <div class="cover-sub">An On-Chain Credit Bureau on the Attestcoin Protocol</div>
+  <div class="thesis">Every credit record is a cryptographic proof.</div>
+  <div class="cover-meta">
+    <div>Version 1.0 · September 12, 2026</div>
+    <div>Repository — <a href="https://github.com/henessay/truthgate">github.com/henessay/truthgate</a></div>
+    <div>Live dashboard — <a href="https://truthgate-six.vercel.app">truthgate-six.vercel.app</a></div>
+    <div>Demo video — see the submission form</div>
+  </div>
+</div>
+
+<!-- ============================ 2 · PROBLEM ============================ -->
+<section class="page">
+<h1>1 · The problem and the market</h1>
+<p>Roughly two billion adults are unbanked or credit-invisible: they may save, borrow informally, and repay reliably, yet no institution holds a record that any lender will trust. A credit bureau is, at its core, a registry of financial facts about a person — and for most of the world that registry either does not exist or cannot be independently verified.</p>
+<p>Public blockchains looked like the answer: every deposit, repayment, and liquidation is already recorded on a ledger nobody can rewrite. In practice, on-chain reputation has remained unverifiable at the point of use. A lending protocol on chain A cannot read chain B; so every "cross-chain reputation" system to date has inserted a trusted party in the middle — an indexer whose database is taken at its word, an oracle committee, or the project's own backend signing attestations about what it saw. The record may be public, but the <em>reading</em> of it is trusted, which quietly reduces the bureau to the credibility of whoever operates the middleware.</p>
+<p>Prior attempts also stumbled on a subtler problem than transport: <strong>self-attestation</strong>. If any contract can emit "user X repaid me," then proving the event is genuine does not make the fact meaningful — anyone can deploy a contract and write themselves a spotless history. A credit bureau needs both properties at once: records that are <em>cryptographically verifiable</em> end-to-end, and a structural answer to <em>who is allowed to write history and what it costs to lie</em>. TruthGate is built as exactly that pair: an Attestcoin-proof-fed registry of financial facts (nothing enters without a validity proof verified on-chain), and a tiered source-legitimacy model that prices the right to write (§4).</p>
+</section>
+
+<!-- ============================ 3 · ARCHITECTURE ============================ -->
+<section class="page">
+<h1>2 · Architecture</h1>
+
+<h2>2.1 Three layers</h2>
+<ol>
+  <li><strong>Proven-facts registry.</strong> Every fact enters through one pipeline (<code>TruthGateBase.execute</code>): chainKey pin → freshness window → queryId anti-replay → precompile <code>verifyAndEmit</code> → receipt-status check → log parsing. Emitters carry an on-chain trust tier — the structural fix for the self-attestation problem: <em>a proof shows contract Y emitted an event, not that Y is an honest lender.</em></li>
+  <li><strong>Reference scoring.</strong> CAPITAL (amount-weighted, joint cap across protocols) + DISCIPLINE (flat per proven repayment, bond-capped, dark until the capital gate passes) + NEGATIVE (flat per proven liquidation, degrades but never hard-blocks) + local CC3 repayment history (risk-proportional). No cross-asset arithmetic without oracles — heterogeneous amounts are emit-only, by rule.</li>
+  <li><strong>Demo credit line.</strong> A CTC loan book (LPPool) that prices limits off the bureau, with two repayment paths: native CTC on CC3, or USDC locked on Ethereum and delivered by proof (wUSDC mint + treasury swap). Deliberately thin — the first consumer of the data, not the product.</li>
+</ol>
+<p>Remove the proofs and the product ceases to exist. TruthGate has <strong>no other data source</strong>: no oracle feed, no off-chain indexer whose word is trusted, no admin method that writes a score. Every unit of every score component traces to a <code>verifyAndEmit</code> call on the CC3 block-prover precompile:</p>
+<ul>
+  <li><strong>CAPITAL</strong> (<code>ethScore</code>) — grows only from proven <code>FundsDeposited</code> / staking events on Sepolia.</li>
+  <li><strong>DISCIPLINE</strong> (<code>disciplineScore</code>) — grows only from proven repayment events, including a real Morpho Blue Sepolia <code>Repay</code> delivered on-chain.</li>
+  <li><strong>NEGATIVE</strong> (liquidation penalty) — applied only from proven <code>LiquidationCall</code> events; a third party can permissionlessly prove a borrower's liquidation.</li>
+  <li><strong>Path B repayments</strong> — wUSDC is minted on CC3 only against a proven <code>UsdcLockedForRepayment</code> on Sepolia; the bridge holds no other mint path.</li>
+</ul>
+
+<h2>2.2 The proof loop (Sepolia event → CC3 state change)</h2>
+<ol>
+  <li>A financial event fires on Sepolia — e.g. <code>Repay</code> on the official Morpho Blue singleton.</li>
+  <li>Attestcoin attests the Sepolia block on CC3. Measured: <strong>~470 s (~8 min)</strong> for a fresh block — the lag is Attestcoin's design (attestation deliberately trails the source head as reorg protection); <strong>~6 s</strong> if the block is already attested.</li>
+  <li>The off-chain worker builds the proof via the Prover API (<code>ProofBuilder.getProof(txHash)</code> from <code>@gluwa/usc-sdk</code>) → {txBytes, MerkleProof, ContinuityProof}. Measured: <strong>~0.4–0.7 s</strong> for an attested block (prover cache).</li>
+  <li>Optional free pre-check: the same proof through <code>verify</code> as an <code>eth_call</code> (staticCall) — the worker spends zero gas on proofs that would revert. This fired live: an over-cap repayment was rejected at estimateGas, no on-chain transaction was ever sent.</li>
+  <li>The worker submits <code>execute(chainKey, height, txBytes, merkleProof, continuityProof)</code> to the consumer contract (CreditCore or RepaymentBridge), which calls the precompile verifier <code>0x…0FD2</code>: <code>verifyAndEmit(...)</code>. Measured end-to-end (verify + decode + business logic): <strong>~10–12 s</strong>, <strong>~670k gas</strong> for a scoring delivery, <strong>~1.0M gas</strong> for a Path B repayment (mint + accounting).</li>
+  <li>The precompile proves <em>inclusion in a finalized Sepolia block</em> — nothing more. Everything after that is our contract: receipt-status check, log extraction, registry tier weighting, scoring.</li>
+</ol>
+
+<h2>2.3 The base contract (<span class="mono">TruthGateBase</span>)</h2>
+<p>Every proof enters through one audited pipeline, in this order:</p>
+<ol>
+  <li><strong>chainKey pin</strong> — <code>require(chainKey == 1)</code> (Sepolia's attested-chain key on CC3).</li>
+  <li><strong>Freshness window</strong> — <code>height ≥ minAcceptedHeight</code> where scoring semantics require it (stale-event pushing).</li>
+  <li><strong>Anti-replay</strong> — <code>queryId = keccak256(chainKey ‖ height ‖ txIndex)</code>; <code>processedQueries[queryId]</code> is required-unset <em>before</em> any processing.</li>
+  <li><strong>Verification</strong> — <code>VERIFIER.verifyAndEmit(...)</code>; the precompile reverts on an invalid proof.</li>
+  <li><strong>Receipt status</strong> — the precompile does <strong>not</strong> check whether the source transaction succeeded, only that it is included. <code>EvmV1Decoder.decodeReceiptFields</code> → <code>require(receiptStatus == 1)</code> is our check, mandatory before any business logic.</li>
+  <li><strong>Log extraction</strong> — filtered by event signature (topic0). Two variants: <code>_validateAndExtractLogsAnySource</code> (CreditCore — the emitter's trust level is decided by the registry, per log) and the pinned-emitter <code>_validateAndExtractLogs</code> (RepaymentBridge — money movement accepts exactly one registered vault).</li>
+  <li><strong>Atomicity</strong> — no <code>try/catch</code>, no unchecked low-level calls anywhere in <code>execute → handlers</code>: any failure reverts the whole transaction including the <code>processedQueries</code> mark. Guarantee: <em>queryId marked ⟺ all effects applied</em> — otherwise a partially-executed proof with a burned queryId would be an unrecoverable hole. Locked by <code>test_invariant_queryIdMarkedIffEffectsApplied</code>.</li>
+</ol>
+</section>
+
+<!-- ============================ 4 · SOURCE LEGITIMACY ============================ -->
+<section class="page">
+<h1>3 · Source legitimacy: who writes your history</h1>
+<p>Attestcoin's proof answers exactly one question: <em>was this event emitted by contract Y in a finalized source-chain block?</em> It cannot answer whether Y is an honest lender. Without a second layer, anyone could deploy a contract that emits <code>Repay</code> events and write themselves a credit history — the self-attestation problem, and the central design problem of a proof-fed bureau. CreditCore v4 closes it with three structural fixes:</p>
+
+<p><strong>1. Tier field.</strong> Every event emitter carries an on-chain trust tier in the source registry (<code>sources</code> mapping):</p>
+<ul>
+  <li><strong>VERIFIED</strong> — canonical protocol deployments pinned against mainnet (Aave, Morpho, Spark, Comet, Rocket Pool, EigenLayer) plus the ScoringVault (its deposit events are intrinsically backed by <code>msg.value</code> — it is the capital anchor, and gating capital by bonds would make the capital gate circular). Full weight. Registration is owner-only.</li>
+  <li><strong>BONDED</strong> — any lender contract may join <strong>permissionlessly</strong> via <code>registerBondedSource() payable</code>, staking a CTC bond (≥ 1 CTC) behind its records. Weight is capped by the bond (fix 2). Our own LoanBookSim runs at this tier with a real 10 CTC bond posted on-chain — the simulator is no longer silently trusted.</li>
+  <li><strong>UNKNOWN</strong> — everything else (the mapping default). Events still verify and emit (visible history), but contribute <strong>zero</strong> to every score. Negative signals are tier-weighted too: an unregistered contract cannot degrade anyone's score (griefing shield).</li>
+</ul>
+<p><strong>2. Per-source bond-cap.</strong> For a BONDED source, the total credit-limit influence attributable to its records — positive score deltas converted through the limit slope, and liquidation penalties as-is — is clamped at its staked bond (<code>attributedLimit ≤ bond</code>, linear, constant ratio = the existing <code>SCORE_SLOPE</code>). The invariant is literal: <em>a fake lender cannot write more reputation than it has capital at risk</em> — attack cost ≥ extracted benefit — and symmetrically cannot inflict more limit damage than its bond. Attribution history is never reset: withdrawing and re-posting a bond does not launder it. Bond withdrawal is owner-arbitrated in v4; slashing/challenge of dishonest bonded sources is roadmap, stated as such.</p>
+<p><strong>3. Capital gate.</strong> DISCIPLINE contributes to a borrower's limit only while that borrower has independently proven CAPITAL of at least <code>CAPITAL_GATE_THRESHOLD</code> (0.015 ETH) — an indicator multiplier evaluated at read time, retroactive in both directions. A self-made lender cannot farm score for a wallet that has no real skin in the game. The threshold is a demo-scale constant; production pools calibrate to their loan sizes.</p>
+<p><strong>Dust-repay floor and the discipline cap.</strong> External repayments earn a flat <code>EXTERNAL_REPAY_FLAT_SCORE</code> (0.1) per proven event — amounts are heterogeneous loan-token units and stay emit-only (§5). Flat credits invite dust spam (1-wei repays on a permissionless market), so two bounds apply: a per-event floor <code>minDisciplineEventAmount</code> (default 1e4 raw loan-token units — a deliberately decimals-unaware heuristic; it kills literal-wei spam, nothing more) and the per-borrower <code>DISCIPLINE_SCORE_CAP</code> (1.0 = at most +10 CTC of limit from discipline) as the economic bound. Stated honestly: an attacker who passes the capital gate can still farm gas-price repays on a verified permissionless protocol <strong>up to the cap</strong> — bounded, not eliminated; elimination needs oracle-weighted amounts (roadmap).</p>
+
+<h2>3.1 Reputation earned on CC3 itself: size × time, not repayment count</h2>
+<p><strong>localScore</strong> grows for repaid CreditCore loans — proportionally to the risk the pool actually took on, not to the mere fact of repayment:</p>
+<pre>localScoreDelta = principal × min(heldBlocks, LOAN_DURATION_BLOCKS) / LOAN_DURATION_BLOCKS
+                  / LOCAL_SCORE_NORM_PRINCIPAL</pre>
+<ul>
+  <li><code>heldBlocks</code> — CC3 blocks from issuance to the closing payment; <code>MIN_HOLD_BLOCKS = LOAN_DURATION_BLOCKS/4</code> — repayment before the threshold goes through normally but accrues no score. A late repayment rehabilitates (clears debt, unblocks borrowing) but accrues nothing.</li>
+  <li>Why the "borrow-and-repay cycle" attack fails: an instant cycle yields exactly 0 (hold threshold + zero-time proportion); above the threshold, gaining +1 CTC of limit requires holding ~4.5 CTC for the full term and paying ~0.225 CTC of interest — the limit costs ≥ ~22.5% of its value in paid interest, however it is split across loans. The only way to farm localScore is to actually use credit and pay for it — exactly the behavior being measured.</li>
+  <li>The time parameters are constructor-set (immutable); the demo deploy compresses them (~240-block term vs. the hardcoded production default of 100,000) so the "reputation → more credit" flywheel is observable live. The reward depends on the <strong>fraction</strong> of the term held, so proportional compression preserves the economics (locked by <code>test_scoreScaleInvariantUnderCompressedSchedule</code>).</li>
+</ul>
+<p><strong>CAPITAL is counted once, not once per protocol.</strong> Deposits are a weak signal — the same funds can be cycled deposit→withdraw→deposit, or restaked across protocols — so all CAPITAL sources draw from one shared accumulator against a single <code>DEPOSIT_SCORE_CAP</code> (2 ETH) per address (<code>test_jointCapitalCap_capitalCountedOnce</code>). <strong>A proven liquidation degrades but never hard-blocks</strong>: the penalty burns only the earned bonus — the base limit always survives, and <code>ethScore</code> is untouched, so negative proofs cannot be weaponized into a lockout.</p>
+</section>
+
+<!-- ============================ 5 · BOUNDARY ============================ -->
+<section class="page">
+<h1>4 · The boundary of provability</h1>
+<p>Attestcoin proves one class of statement: <em>this transaction, with this receipt and these logs, is included in a finalized source-chain block.</em> Three consequences shape the bureau's design; each is documented rather than papered over.</p>
+
+<h2>4.1 State-dependent event meaning: why Comet DISCIPLINE is unprovable</h2>
+<p>Compound v3 has <strong>no repayment event</strong>. Repaying debt is <code>supply()</code> of the base asset into an account whose principal is negative; the contract emits the same <code>Supply(address indexed from, address indexed dst, uint256 amount)</code> whether the caller is a lender depositing or a borrower repaying. Which one it was is determined by the <strong>sign of the account's principal before the transaction</strong> — contract <em>state</em>, not transaction content.</p>
+<p>USC proves a transaction's inclusion and with it the receipt — its events. It does not (and cannot, in this model) attest arbitrary historical contract state at that block. So a proven <code>Supply</code> cannot be trustlessly classified as a repayment: doing so would require trusting an archive-node lookup or an oracle for the pre-transaction balance sign — exactly the trust assumption the bureau exists to avoid. The failure mode of guessing would be score farming: any lender deposit would mint DISCIPLINE for free. <code>AbsorbDebt</code> has no such ambiguity — it fires only when the protocol absorbs an underwater account — so Comet contributes NEGATIVE only. This is a semantic property of Comet's event design, not a parser gap: it is documented as unprovable rather than left as silent non-coverage.</p>
+
+<h2>4.2 Existence, never absence: wallet age is only provable as a lower bound</h2>
+<p>An inclusion proof is an existential statement. It can establish <em>"this wallet had already transacted at height H"</em> — which lower-bounds the wallet's age — but it can never establish <em>"this was the wallet's first transaction"</em> or <em>"this wallet has never been liquidated"</em>: those are universally-quantified claims over <strong>all</strong> source-chain history, and no finite set of inclusion proofs expresses them.</p>
+<p>The bureau's consequence is structural: it scores the <strong>presence of proven good facts</strong> and the <strong>presence of proven bad facts</strong>, never a certified <em>absence</em> of bad ones. A borrower can prove they deposited, repaid, or recovered after a liquidation; nobody can prove a clean history — and the design does not pretend otherwise. The honest complement is that negative facts are third-party-provable: anyone can deliver a proof of your liquidation (tier-weighted, so only registered sources count). A production "wallet age" signal would follow the same rule: credit the proven lower bound (age ≥ now − H of the earliest proven transaction), never a claimed exact age.</p>
+
+<h2>4.3 No cross-asset arithmetic without oracles</h2>
+<p>Event amounts across protocols are denominated in heterogeneous tokens: 500 USDC (6 decimals) and 500 DAI (18 decimals) differ by 1e12 as raw values while representing the same economics; Morpho amounts are per-market loan-token units; EigenLayer shares are per-strategy LST units. Comparing or summing them trustlessly requires price oracles — a trust dependency the v1 bureau refuses. The design rule, applied uniformly: <strong>heterogeneous amounts are parsed and emitted for transparency but never enter scoring arithmetic.</strong> Liquidation penalties are flat per-event; external repays earn a flat 0.1; EigenLayer deposits credit flat. The two exceptions are principled: native-ETH amounts (vault deposits, Rocket Pool — one homogeneous unit) are amount-weighted under the joint cap, and the dust floor is an explicitly decimals-unaware heuristic that kills literal-wei spam and claims nothing more. Oracle-weighted amounts are roadmap, and would relax exactly this rule, consciously.</p>
+</section>
+
+<!-- ============================ 6 · COVERAGE & EVIDENCE ============================ -->
+<section class="page">
+<h1>5 · Coverage and live evidence</h1>
+
+<h2>5.1 Protocol coverage (≈ $40.2B TVL)</h2>
+<p>The bureau's parser library extends past the contracts wired into the live Sepolia pipeline. <code>docs/protocol-registry.json</code> is the machine-readable registry; <code>contracts/test/MainnetParity.t.sol</code> pins every parser against <strong>real historical transactions of the verified live mainnet contracts</strong> — raw log bytes decoded through our parsers with every field asserted, source tx hash cited. A topic0 match alone cannot catch data-layout drift when a fork keeps the signature string but changes field assumptions; decoding real bytes can. Per-protocol TVL figures: DefiLlama, 2026-08-31.</p>
+<table>
+  <thead><tr><th>Protocol</th><th>Events</th><th>Category</th><th>Status</th><th>TVL</th></tr></thead>
+  <tbody>
+    <tr><td>Aave v3</td><td><code>Repay</code>, <code>LiquidationCall</code></td><td>DISCIPLINE, NEGATIVE</td><td>mainnet-pinned + Sepolia live (action live, watcher armed)</td><td class="num">$17.2B</td></tr>
+    <tr><td>Spark (SparkLend)</td><td><code>Repay</code>, <code>LiquidationCall</code></td><td>DISCIPLINE, NEGATIVE</td><td>mainnet-pinned (byte-identical Aave fork; pool identity checked on-chain — same parser, no code of its own)</td><td class="num">$4.4B</td></tr>
+    <tr><td>Morpho Blue</td><td><code>Repay</code>, <code>Liquidate</code></td><td>DISCIPLINE, NEGATIVE</td><td>mainnet singleton pinned + <strong>Sepolia live pipeline — real Repay delivered on-chain</strong></td><td class="num">$9.5B</td></tr>
+    <tr><td>Compound v3 (Comet)</td><td><code>AbsorbDebt</code></td><td>NEGATIVE only</td><td>mainnet-pinned; DISCIPLINE provably unprovable (§4.1)</td><td class="num">$1.4B</td></tr>
+    <tr><td>Rocket Pool</td><td><code>DepositReceived</code></td><td>CAPITAL</td><td>mainnet-pinned (address resolved live from RocketStorage — upgradeable contracts)</td><td class="num">$1.3B</td></tr>
+    <tr><td>EigenLayer</td><td><code>Deposit</code></td><td>CAPITAL (flat; joint cap)</td><td>mainnet-pinned, current slashing-era layout (the remembered older layout produced zero logs on the live proxy and is deliberately unsupported)</td><td class="num">$6.4B</td></tr>
+    <tr><td>Maker/Sky · Euler v2 · Fluid · Curve</td><td>—</td><td>—</td><td>roadmap (Maker's anonymous-event model needs a calldata adapter, not a log parser)</td><td class="num">—</td></tr>
+  </tbody>
+</table>
+
+<h2>5.2 Consumed events (live Sepolia → CC3 pipeline)</h2>
+<table>
+  <thead><tr><th>Event</th><th>Source &amp; tier</th><th>Effect</th></tr></thead>
+  <tbody>
+    <tr><td><code>FundsDeposited(depositor, amount, nonce)</code></td><td>ScoringVault — <strong>Verified</strong></td><td>ethScore += amount, joint CAPITAL cap 2 ETH</td></tr>
+    <tr><td><code>LoanRepaidOnEth(borrower, loanId, amount)</code></td><td>LoanBookSim — <strong>Bonded, 10 CTC</strong></td><td>disciplineScore += amount + flat bonus, bond-capped</td></tr>
+    <tr><td><code>LiquidationCall(...)</code> — Aave v3's real layout, byte-for-byte</td><td>LoanBookSim — <strong>Bonded, 10 CTC</strong></td><td>flat penalty 1 / 2 CTC, cap 5; burns earned bonus only</td></tr>
+    <tr><td><code>Repay(reserve, user, repayer, amount, useATokens)</code></td><td>Aave v3 Sepolia Pool — <strong>Verified</strong></td><td>disciplineScore += 0.1 flat (watcher armed)</td></tr>
+    <tr><td><code>Repay(id, caller, onBehalf, assets, shares)</code></td><td>Morpho Blue Sepolia singleton — <strong>Verified</strong></td><td>disciplineScore += 0.1 flat — <strong>delivered live</strong></td></tr>
+    <tr><td><code>UsdcLockedForRepayment(borrower, ccLoanId, amount)</code></td><td>RepaymentVault — pinned emitter</td><td>wUSDC mint + repayment accounting (≤30% of the debt)</td></tr>
+  </tbody>
+</table>
+
+<h2>5.3 v4 go-live evidence (2026-09-01)</h2>
+<p>All nine historical Sepolia proofs replayed with fresh proof deliveries, plus the real Morpho Repay as the tenth — zero failures:</p>
+<table>
+  <thead><tr><th>#</th><th>Replayed Sepolia event</th><th>CC3 delivery tx</th><th>Result</th></tr></thead>
+  <tbody>
+    <tr><td class="num">1–6</td><td>six ScoringVault deposits</td><td class="num">0xdc6ae575…15e3 · 0x350e4505…a64f · 0xe4f38752…dcdb · 0xcc66cb58…fa4c · 0x5a256def…ae12 · 0xd0e44cd4…c0d8</td><td><code>EthScoreIncreased</code> ×6, capital 0.027 restored</td></tr>
+    <tr><td class="num">7</td><td>LoanBookSim repayment sim</td><td class="num">0x0e26ee28…194c</td><td><code>DisciplineScoreIncreased</code> +0.35 (3.5 CTC attributed against the 10 CTC bond)</td></tr>
+    <tr><td class="num">8–9</td><td>two LoanBookSim liquidations</td><td class="num">0x1bc80bdd…85ab · 0x0c8374fd…6133</td><td><code>LiquidationPenaltyApplied</code> 1 + 2 CTC (attribution 6.5/10 total)</td></tr>
+    <tr><td class="num">10</td><td><strong>Morpho Blue Sepolia Repay</strong> <span class="num">0xf232bbd7…ee17</span></td><td class="num"><strong>0x5d32a354…af38b</strong></td><td><code>DisciplineScoreIncreased</code> +0.1 — <strong>the first real external-protocol DISCIPLINE record</strong> (50e6 assets clear the dust floor by 5000×)</td></tr>
+  </tbody>
+</table>
+
+<div class="keep">
+<h2>5.4 Post-replay bureau state (reconciled against the arithmetic)</h2>
+<table>
+  <thead><tr><th>Quantity</th><th>Value</th><th>Reconciliation</th></tr></thead>
+  <tbody>
+    <tr><td>capital (ethScore / depositScoreOf)</td><td class="num">0.027</td><td>six proven deposits, joint cap untouched ✓</td></tr>
+    <tr><td>disciplineScore</td><td class="num">0.45</td><td>0.35 (sim repay) + 0.1 (Morpho flat) ✓</td></tr>
+    <tr><td>capital gate (threshold 0.015)</td><td class="num">PASSED at 1.8×</td><td>0.027 ≥ 0.015 → discipline counts ✓</td></tr>
+    <tr><td>effectiveScore</td><td class="num">0.477</td><td>0.027 + 0.45 ✓</td></tr>
+    <tr><td>liquidationPenalty</td><td class="num">3.0</td><td>1 (first) + 2 (repeat) ✓</td></tr>
+    <tr><td>creditLimit</td><td class="num"><strong>6.67 CTC</strong></td><td>5 (BASE) + (0.477 − 0.01)×10 − 3 ✓</td></tr>
+    <tr><td>sources[LoanBookSim]</td><td class="num">Bonded 10, attributed 6.5</td><td>3.5 (discipline×slope) + 3.0 (penalties) ≤ bond ✓</td></tr>
+  </tbody>
+</table>
+<p class="small">Snapshot at v4 go-live; the live state evolves as the demo borrower keeps using credit — current values on the Overview screen of the live dashboard.</p>
+</div>
+
+<h2>5.5 Protections that fired on live networks</h2>
+<ul>
+  <li><strong>Anti-replay by queryId</strong>: re-delivery of an already-processed lock — revert <code>Query already processed</code>.</li>
+  <li><strong>Path B 30% cap</strong>: an over-cap repayment rejected with <code>USDC share cap exceeded</code> — twice over: the contract require, and the worker spent no gas (revert caught at estimateGas; no on-chain transaction sent).</li>
+  <li><strong>Height-scale bug caught by the live run</strong> (fixed): a CC3-block deadline was once compared against a Sepolia height — every repayment reverted; the bridge was redeployed checking against CC3 <code>block.number</code>, and the same proof then went through. Kept in the record deliberately: the live run is a test, not a demo reel.</li>
+  <li><strong>CC3 code-size limit</strong>: the v4 core exceeded the 24,576-byte runtime limit; the solc optimizer (200 runs) brought it to 17,928 bytes with the full 88-test suite passing identically.</li>
+</ul>
+</section>
+
+<!-- ============================ 7 · TRUST & ROADMAP ============================ -->
+<section class="page">
+<h1>6 · Trust assumptions and the decentralization roadmap</h1>
+<p>We enumerate our own trust assumptions. The contract owner can, today: register VERIFIED sources (curation of canonical deployments), arbitrate bonded-source bond withdrawal (no slashing/challenge mechanism yet), tune the dust floor <code>setMinDisciplineEventAmount</code>, set the freshness window <code>setMinAcceptedHeight</code>, and mark loans expired. Each is a v4 pragmatism, not a design endpoint: the roadmap replaces curation with on-chain verification proofs where possible, bond arbitration with a challenge game, and the knobs with governance.</p>
+<p>Everything else is trust-minimized by construction: scores have no admin setter, the bridge has no mint path without a proof, and the AI agent's authority is limited to submit/defer/escalate decisions on proofs — it never holds keys to money.</p>
+
+<h2>6.1 Roadmap</h2>
+<ul>
+  <li><strong>Bonded-source challenge mechanism (optimistic, UMA-pattern).</strong> Replace owner-arbitrated bond withdrawal with an optimistic challenge game: a withdrawal request opens a dispute window during which anyone may challenge a source's record history by staking against it; unchallenged withdrawals settle automatically, disputed ones escalate to a resolution layer. The bond becomes slashable evidence collateral rather than an owner-guarded deposit.</li>
+  <li><strong>Reverse writability (CC3 → Ethereum), when the protocol ships it.</strong> v1 is read-only by design — locked USDC stays locked, and the economics closes on the CC3 side through the SwapDesk. Attestcoin writability would let the bureau export attestations (e.g., a proven score snapshot consumable by Ethereum lending pools) and let the vault release funds against CC3-side proofs.</li>
+  <li><strong>Identity sources: BABT and ENS.</strong> Sybil-resistance signals that are themselves on-chain events — Binance Account Bound Token holdings, ENS registrations and their age — consumed through the same proof pipeline and the same tier registry, credited under the same existence-only rule (§4.2): presence of a proven identity fact, never certified uniqueness.</li>
+  <li><strong>Per-horizon pools.</strong> Multiple LPPools with different loan durations and risk appetites pricing off one shared bureau — the registry is the product; pools are consumers, each calibrating the capital-gate threshold and limit slope to its own loan sizes.</li>
+  <li><strong>Oracle-weighted amounts.</strong> The single conscious relaxation of the no-cross-asset rule (§4.3): once a price-oracle dependency is accepted, heterogeneous repay/liquidation amounts can enter scoring arithmetic value-weighted instead of flat.</li>
+</ul>
+
+<h2>6.2 v1 limitations, stated</h2>
+<ul>
+  <li><strong>Identity model: a single EOA on both chains.</strong> A participant's Sepolia address must match their CC3 address — the borrower is identified by the address in the proven event's indexed topic. Smart-contract wallets and differing cross-chain addresses are unsupported; on a mismatch the bridge reverts.</li>
+  <li>Loan deadlines are in CC3 blocks, checked against CC3 <code>block.number</code> at proof delivery time (+buffer). Sepolia heights take no part in deadline checks — the scales are incomparable.</li>
+  <li>The wUSDC/CTC rate is a constant 1:1 (production: an oracle).</li>
+</ul>
+</section>
+
+<!-- ============================ 8 · BACK PAGE ============================ -->
+<section class="page">
+<h1>7 · Measured performance and references</h1>
+<h2>7.1 Measured performance (live networks)</h2>
+<table>
+  <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>Attestation of a fresh Sepolia block on CC3</td><td class="num">~470 s (~8 min; the lag is Attestcoin's design — reorg protection)</td></tr>
+    <tr><td>Wait for an already-attested block</td><td class="num">~6 s</td></tr>
+    <tr><td>Proof generation (Prover API, attested block)</td><td class="num">~0.4–0.7 s (cache)</td></tr>
+    <tr><td>Verification + execute on CC3, end-to-end</td><td class="num">~10–12 s</td></tr>
+    <tr><td>Gas: scoring delivery (execute → CreditCore)</td><td class="num">~670k (669,340 / 669,788)</td></tr>
+    <tr><td>Gas: repayment delivery (execute → RepaymentBridge, mint + accounting)</td><td class="num">~1.0M (1,008,350 / 986,174)</td></tr>
+    <tr><td>Gas: treasury swap <code>swapWusdcForCtc</code></td><td class="num">401,282</td></tr>
+  </tbody>
+</table>
+
+<h2>7.2 Current deployment</h2>
+<table>
+  <thead><tr><th>Contract</th><th>Chain</th><th>Address</th></tr></thead>
+  <tbody>
+    <tr><td>CreditCore v4 (the bureau)</td><td>CC3</td><td class="num">0x02501978888A9BedfED93F9665c7DDeA466f12F5</td></tr>
+    <tr><td>RepaymentBridge v5</td><td>CC3</td><td class="num">0x1e9E90d0a47Cc3E080B37F986e1Bf7E946446713</td></tr>
+    <tr><td>WrappedUSDC</td><td>CC3</td><td class="num">0xF3663288a86BeeAD53Bf9C275E663bA9c247A7AC</td></tr>
+    <tr><td>LPPool</td><td>CC3</td><td class="num">0x1Cc00628a8590e4eFDA496242439d5d09e726C14</td></tr>
+    <tr><td>ScoringVault</td><td>Sepolia</td><td class="num">0xe5f1cb738ba279440565D7B46fFAb38a0E52AF37</td></tr>
+    <tr><td>LoanBookSim (bonded source, 10 CTC)</td><td>Sepolia</td><td class="num">0x6da1A10d236607224d49De19e69885BC1f1Ad7af</td></tr>
+    <tr><td>RepaymentVault</td><td>Sepolia</td><td class="num">0xD694C9f83C6D8B9Ec4DCB7A54cD3305BB050deF1</td></tr>
+    <tr><td>Morpho Blue singleton (Verified source)</td><td>Sepolia</td><td class="num">0xd011EE229E7459ba1ddd22631eF7bF528d424A14</td></tr>
+    <tr><td>Aave v3 Pool (Verified source)</td><td>Sepolia</td><td class="num">0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951</td></tr>
+  </tbody>
+</table>
+
+<hr class="foot-rule" />
+<p class="small">
+  Repository — <a href="https://github.com/henessay/truthgate">github.com/henessay/truthgate</a> · Live dashboard — <a href="https://truthgate-six.vercel.app">truthgate-six.vercel.app</a><br/>
+  Full transaction-level evidence: <code>docs/live-run.md</code> · Machine-readable coverage: <code>docs/protocol-registry.json</code> · Integration deep dive: <code>docs/attestcoin-integration-summary.md</code><br/>
+  TruthGate whitepaper v1.0 · September 12, 2026 · Networks: Creditcoin CC3 Testnet (chainId 102031) × Ethereum Sepolia · Protocol: USC / Attestcoin (Gluwa)
+</p>
+</section>
+
+<!-- Page numbers are stamped post-render (Chromium print ignores @page margin boxes);
+     see the render command in the whitepaper commit message. -->
+</body>
+</html>
