@@ -11,3 +11,4 @@ worker/failed.json
 docs/vendor/ccnext-testnet-bridge-examples/
 docs/vendor/usc-testnet-bridge-examples/
 web/dist/
+.vercel
