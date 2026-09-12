@@ -1,6 +1,9 @@
 import { formatEther } from 'ethers';
-import { shortHash } from '../../lib/format';
-import type { AttestationDto } from '../../lib/workerApi';
+import { DEMO_BORROWER } from '../../lib/contracts';
+import { fmtCtc, shortHash } from '../../lib/format';
+import { CHAIN_ONLY, type AttestationDto } from '../../lib/workerApi';
+import { usePathBDeliveries } from '../borrower/hooks';
+import { useScoreRecords } from '../overview/hooks';
 import { shortReason, type CardStatus, type PipelineCard } from './fold';
 import { useAttestation, useWorkerLive } from './hooks';
 import './pipeline.css';
@@ -24,6 +27,87 @@ const STATUS_ORDER: Record<CardStatus, number> = {
 };
 
 export function PipelineScreen() {
+  return CHAIN_ONLY ? <ChainOnlyPipeline /> : <LivePipeline />;
+}
+
+/** Hosted chain-only mode: no worker API — the designed note plus the proven
+ * deliveries already recorded on CC3 (score events + bridge deliveries). */
+function ChainOnlyPipeline() {
+  const records = useScoreRecords(DEMO_BORROWER);
+  const deliveries = usePathBDeliveries();
+
+  const externalDiscipline = (records.data ?? []).filter(
+    (r) => r.kind === 'discipline' && (r.source === 'Morpho Blue repay' || r.source === 'Aave v3 repay'),
+  );
+  const pathB = Object.entries(deliveries.data ?? {});
+  const loading = records.isLoading || deliveries.isLoading;
+
+  return (
+    <div className="pipeline">
+      <div className="neo-card pipe-chain-only">
+        <div className="stat-title">Proof worker</div>
+        <p>
+          The proof worker runs alongside the deployment — watch the live pipeline in the demo video, or run it
+          locally with one command (README). All other data on this dashboard is read directly from both chains.
+        </p>
+      </div>
+
+      <section>
+        <h2 className="pipe-h2">Proven deliveries (read from CC3)</h2>
+        {loading && <p className="dim">Reading delivery records from CC3…</p>}
+        <div className="pipe-feed">
+          {externalDiscipline.map((r) => (
+            <ProvenCard
+              key={r.cc3TxHash + r.queryId}
+              title={`${r.source} → DisciplineScoreIncreased`}
+              meta={`+${fmtCtc(r.delta, 3)} score · CC3 block ${r.blockNumber.toLocaleString('en-US')}`}
+              cc3TxHash={r.cc3TxHash}
+            />
+          ))}
+          {pathB.map(([loanId, d]) => (
+            <ProvenCard
+              key={d.lastCc3TxHash}
+              title="UsdcLockedForRepayment → UsdcRepaymentProcessed"
+              meta={`loan #${loanId}${d.count > 1 ? ` · ${d.count} deliveries` : ''} · via RepaymentBridge`}
+              cc3TxHash={d.lastCc3TxHash}
+            />
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/** A completed proof journey reconstructed from its on-chain delivery record. */
+function ProvenCard({ title, meta, cc3TxHash }: { title: string; meta: string; cc3TxHash: string }) {
+  return (
+    <article className="pipe-card done">
+      <header className="pipe-card-head">
+        <div className="pipe-card-title">
+          <span className="pipe-event-name">{title}</span>
+          <span className="dim num">{meta}</span>
+        </div>
+        <div className="pipe-card-links num">
+          <a href={`${CC3_EXPLORER}/tx/${cc3TxHash}`} target="_blank" rel="noreferrer" title="Proof delivery on CC3">
+            CC3 {shortHash(cc3TxHash)}
+          </a>
+          <span className="badge proven">proven</span>
+        </div>
+      </header>
+      <div className="pipe-steps">
+        {PHASES.map((p, i) => (
+          <div key={p.id} className="pipe-step done">
+            <i className="pipe-dot" />
+            <span className="pipe-step-label">{p.label}</span>
+            {i < PHASES.length - 1 && <i className="pipe-link" />}
+          </div>
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function LivePipeline() {
   const live = useWorkerLive();
   const attestation = useAttestation();
 

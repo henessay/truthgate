@@ -108,3 +108,7 @@
 .pipe-note { font-size: 13px; color: var(--text-dim); }
 .pipe-note.failed { color: var(--red); }
 .pipe-note.done { color: var(--green); }
+
+/* ---------- hosted chain-only mode ---------- */
+.pipe-chain-only { display: flex; flex-direction: column; gap: 8px; }
+.pipe-chain-only p { margin: 0; max-width: 72ch; font-size: 14px; line-height: 1.5; color: var(--text-dim); }

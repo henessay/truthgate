@@ -6,8 +6,18 @@ import LPPoolAbi from './abi/LPPool.json';
 import WrappedUSDCAbi from './abi/WrappedUSDC.json';
 import { cc3Provider } from './providers';
 
+// Addresses: VITE_ env vars first (baked into the Vercel config for hosted
+// deploys), docs/deployments.json as the local-dev fallback (build-time import,
+// never a runtime read).
+const addrEnv = (import.meta as { env?: Record<string, string> }).env;
+
 export const ADDR = {
-  cc3: deployments.cc3,
+  cc3: {
+    CreditCore: addrEnv?.VITE_CREDIT_CORE ?? deployments.cc3.CreditCore,
+    RepaymentBridge: addrEnv?.VITE_REPAYMENT_BRIDGE ?? deployments.cc3.RepaymentBridge,
+    LPPool: addrEnv?.VITE_LP_POOL ?? deployments.cc3.LPPool,
+    WrappedUSDC: addrEnv?.VITE_WRAPPED_USDC ?? deployments.cc3.WrappedUSDC,
+  },
   sepolia: deployments.sepolia,
 } as const;
 

@@ -1,0 +1,13 @@
+# Only the web build needs to reach Vercel: workspace manifests + web/ + docs/deployments.json.
+.git
+contracts/lib
+contracts/out
+contracts/cache
+contracts/broadcast
+contracts/src
+contracts/test
+contracts/script
+docs/vendor
+web/dist
+worker/src
+agent

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "pnpm install",
+  "buildCommand": "pnpm --filter @truthgate/web build",
+  "outputDirectory": "web/dist",
+  "build": {
+    "env": {
+      "VITE_CC3_RPC": "https://rpc.cc3-testnet.creditcoin.network",
+      "VITE_SEPOLIA_RPC": "https://ethereum-sepolia-rpc.publicnode.com",
+      "VITE_CREDIT_CORE": "0x02501978888A9BedfED93F9665c7DDeA466f12F5",
+      "VITE_REPAYMENT_BRIDGE": "0x1e9E90d0a47Cc3E080B37F986e1Bf7E946446713",
+      "VITE_LP_POOL": "0x1Cc00628a8590e4eFDA496242439d5d09e726C14",
+      "VITE_WRAPPED_USDC": "0xF3663288a86BeeAD53Bf9C275E663bA9c247A7AC"
+    }
+  }
+}

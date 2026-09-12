@@ -4,8 +4,15 @@
  * every screen must keep working without the worker.
  */
 
-const BASE =
-  (import.meta as { env?: Record<string, string> }).env?.VITE_WORKER_API ?? 'http://127.0.0.1:8787';
+const env = (import.meta as { env?: Record<string, string | boolean> }).env;
+// Localhost default only in dev; a production build without VITE_WORKER_API is a
+// chain-only deploy — polling the VIEWER'S own 127.0.0.1 would be nonsense.
+const BASE: string | null =
+  (env?.VITE_WORKER_API as string | undefined) ?? (env?.PROD ? null : 'http://127.0.0.1:8787');
+
+/** No worker API configured (hosted chain-only mode): the Pipeline screen
+ * renders proven deliveries read from CC3 instead of the live feed. */
+export const CHAIN_ONLY = BASE === null;
 
 export interface WorkerQueueItem {
   key: string;
@@ -34,6 +41,7 @@ export interface WorkerFailedDto extends Omit<WorkerQueueItem, 'notBeforeMs'> {
 }
 
 async function get<T>(path: string): Promise<T | null> {
+  if (BASE === null) return null;
   try {
     const res = await fetch(`${BASE}${path}`, { signal: AbortSignal.timeout(3_000) });
     if (!res.ok) return null;
